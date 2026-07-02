@@ -1,0 +1,84 @@
+-- PickupSystem.lua
+local PickupSystem = {}
+PickupSystem.__index = PickupSystem
+
+local CONFIG = {
+	MAX_DISTANCE  = 15,
+	BOB_HEIGHT    = 0.3,
+	BOB_SPEED     = 2,
+	SPIN_SPEED    = 50,
+}
+
+function PickupSystem.new()
+	local self = setmetatable({}, PickupSystem)
+	self.onPickup = nil
+	return self
+end
+
+function PickupSystem:spawnPickup(itemId, amount, position, itemData)
+	amount = amount or 1
+
+	local part = Instance.new("Part")
+	part.Name        = "Pickup_" .. itemId
+	part.Size        = Vector3.new(2, 2, 2)
+	part.Position    = position
+	part.Anchored    = true
+	part.CanCollide  = false
+	part.Material    = Enum.Material.Neon
+	part.Shape       = Enum.PartType.Ball
+	part.Color       = Color3.fromRGB(255, 215, 100)
+	part:SetAttribute("ItemId", itemId)
+	part:SetAttribute("Amount", amount)
+	part.Parent      = workspace
+
+	print("[PickupSystem] Spawn part di:", position, "Nama:", part.Name)
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size                = UDim2.new(0, 100, 0, 30)
+	billboard.StudsOffset         = Vector3.new(0, 2, 0)
+	billboard.AlwaysOnTop          = true
+	billboard.Parent              = part
+
+	local label = Instance.new("TextLabel")
+	label.Size                    = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency  = 1
+	label.Text                    = (itemData and itemData.name or itemId) .. (amount > 1 and (" x" .. amount) or "")
+	label.TextColor3              = Color3.fromRGB(255, 255, 255)
+	label.TextStrokeTransparency  = 0
+	label.TextSize                = 14
+	label.Font                    = Enum.Font.GothamBold
+	label.Parent                  = billboard
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText            = "Ambil"
+	prompt.ObjectText            = itemData and itemData.name or itemId
+	prompt.HoldDuration          = 0.3
+	prompt.MaxActivationDistance = CONFIG.MAX_DISTANCE
+	prompt.RequiresLineOfSight   = false
+	prompt.Parent                = part
+
+	print("[PickupSystem] Prompt dipasang ke:", part.Name)
+
+	prompt.Triggered:Connect(function(player)
+		print("[PickupSystem] TRIGGERED oleh:", player.Name)
+		if self.onPickup then
+			self.onPickup(player, itemId, amount)
+		end
+		part:Destroy()
+	end)
+
+	task.spawn(function()
+		local startY = position.Y
+		local elapsed = 0
+		while part.Parent do
+			elapsed = elapsed + task.wait(0.03)
+			local bobY = startY + math.sin(elapsed * CONFIG.BOB_SPEED) * CONFIG.BOB_HEIGHT
+			part.Position = Vector3.new(position.X, bobY, position.Z)
+			part.Orientation = Vector3.new(0, elapsed * CONFIG.SPIN_SPEED, 0)
+		end
+	end)
+
+	return part
+end
+
+return PickupSystem
