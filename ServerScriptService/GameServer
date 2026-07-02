@@ -1,0 +1,509 @@
+-- GameServer.lua
+-- Entry point tunggal — instansiasi dan hubungkan semua sistem
+-- Satu-satunya file yang "tahu" semua module
+print("=== GAMESERVER MULAI DIEKSEKUSI ===")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting          = game:GetService("Lighting")
+
+-- ── LOAD MODULES ──
+local Modules    = ReplicatedStorage:WaitForChild("Modules")
+local Calendar   = require(Modules:WaitForChild("Calendar"))
+local TimeSystem = require(Modules:WaitForChild("TimeSystem"))
+local BedSystem  = require(Modules:WaitForChild("BedSystem"))
+local ItemData   = require(Modules:WaitForChild("ItemData")) 
+
+-- ── SETUP REMOTE EVENTS ──
+local remotes = Instance.new("Folder")
+remotes.Name  = "GameRemotes"
+remotes.Parent = ReplicatedStorage
+
+local function makeRemote(name)
+	local r = Instance.new("RemoteEvent")
+	r.Name   = name
+	r.Parent = remotes
+	return r
+end
+
+local Remotes = {
+	SleepFadeOut  = makeRemote("SleepFadeOut"),   -- server → client: layar gelap
+	SleepFadeIn   = makeRemote("SleepFadeIn"),    -- server → client: bangun pagi
+	CalendarSync  = makeRemote("CalendarSync"),   -- server → client: update HUD
+	ShowNotif     = makeRemote("ShowNotif"),       -- server → client: notifikasi
+}
+
+-- ── INSTANSIASI ──
+local calendar   = Calendar.new()
+local timeSystem = TimeSystem.new()
+local bedSystem  = BedSystem.new()
+
+-- ── INISIALISASI LIGHTING ──
+Lighting.ClockTime      = 6.0
+Lighting.Brightness     = 2
+Lighting.ShadowSoftness = 0.5
+
+-- ── CALLBACK: HARI BERGANTI ──
+-- Dipanggil oleh Calendar setiap kali advance()
+calendar.onDayChanged = function(snap, source)
+	-- Update season di TimeSystem
+	timeSystem:setSeason(snap.seasonIndex)
+
+	-- Broadcast ke semua client
+	Remotes.CalendarSync:FireAllClients(snap)
+	
+	if rawget(_G, "farmSystemRef") then
+		_G.farmSystemRef:advanceDay()
+	end
+
+	-- Notifikasi jika via tengah malam (bukan tidur)
+	if source == "midnight" then
+		Remotes.ShowNotif:FireAllClients(
+			string.format("Hari %d — %s %s — Tahun %d",
+				snap.day, snap.seasonIcon, snap.seasonName, snap.year),
+			"midnight"
+		)
+	end
+end
+
+-- ── CALLBACK: TENGAH MALAM ──
+timeSystem.onMidnight = function()
+	calendar:advance("midnight")
+end
+
+-- ── CALLBACK: TIDUR DI KASUR ──
+local sleepLock = false
+
+bedSystem.onSleep = function(_bed)
+	if sleepLock then return end
+	sleepLock = true
+
+	-- Kirim fadeOut ke client
+	Remotes.SleepFadeOut:FireAllClients()
+
+	-- Tunggu animasi gelap
+	task.wait(1.5)
+
+	-- Skip jam ke pagi
+	timeSystem:skipToMorning()
+
+	-- Advance hari
+	local snap = calendar:advance("sleep")
+
+	-- Kirim fadeIn + data hari baru ke client
+	Remotes.SleepFadeIn:FireAllClients(snap)
+
+	task.wait(3)
+	sleepLock = false
+end
+
+-- ── START SEMUA SISTEM ──
+task.wait(1)
+bedSystem:scanAndSetup()
+timeSystem:start()
+
+-- Broadcast kalender awal ke client yang join
+game:GetService("Players").PlayerAdded:Connect(function()
+	task.wait(2)
+	Remotes.CalendarSync:FireAllClients(calendar:getSnapshot())
+end)
+
+-- ══════════════════════════════════════
+-- TAMBAHAN: INVENTORY SYSTEM
+-- ══════════════════════════════════════
+local InventoryManager = require(Modules:WaitForChild("InventoryManager"))
+local Players           = game:GetService("Players")
+
+-- Simpan inventory per player
+local playerInventories = {}
+
+-- ── REMOTE EVENTS UNTUK INVENTORY ──
+local invRemotes = Instance.new("Folder")
+invRemotes.Name   = "InventoryRemotes"
+invRemotes.Parent = remotes  -- masuk ke folder GameRemotes yang sudah ada
+
+local function makeInvRemote(name)
+	local r = Instance.new("RemoteEvent")
+	r.Name   = name
+	r.Parent = invRemotes
+	return r
+end
+
+local InvRemotes = {
+	Sync         = makeInvRemote("InventorySync"),       -- server → client: update tampilan
+	SelectSlot   = makeInvRemote("SelectSlot"),           -- client → server: ganti slot aktif
+	MoveSlot     = makeInvRemote("MoveSlot"),             -- client → server: drag & drop
+}
+
+-- ── SETUP INVENTORY SAAT PLAYER JOIN ──
+local function setupPlayerInventory(player)
+	local inv = InventoryManager.new(player)
+	playerInventories[player.UserId] = inv
+
+	inv.onChanged = function(snapshot)
+		InvRemotes.Sync:FireClient(player, snapshot)
+	end
+
+	-- Starter item (opsional, sesuaikan)
+	inv:addItem("Hoe", 1)
+	inv:addItem("WateringCan", 1)
+	inv:addItem("WheatSeed", 5)
+
+	-- Kirim snapshot awal
+	InvRemotes.Sync:FireClient(player, inv:getSnapshot())
+
+	print("[Inventory] Setup untuk:", player.Name)
+end
+
+Players.PlayerAdded:Connect(setupPlayerInventory)
+
+-- Untuk player yang sudah join sebelum script ini jalan (testing di Studio)
+for _, player in ipairs(Players:GetPlayers()) do
+	setupPlayerInventory(player)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	playerInventories[player.UserId] = nil
+end)
+
+-- ── HANDLE REQUEST DARI CLIENT ──
+InvRemotes.SelectSlot.OnServerEvent:Connect(function(player, slotIndex)
+	local inv = playerInventories[player.UserId]
+	if inv then
+		inv:selectSlot(slotIndex)
+	end
+end)
+
+InvRemotes.MoveSlot.OnServerEvent:Connect(function(player, fromIndex, toIndex)
+	local inv = playerInventories[player.UserId]
+	if inv then
+		inv:moveSlot(fromIndex, toIndex)
+	end
+end)
+
+-- ── EXPOSE FUNGSI GLOBAL UNTUK SCRIPT LAIN (ShippingBin, CropSystem dll) ──
+_G.GetPlayerInventory = function(player)
+	return playerInventories[player.UserId]
+end
+
+print("[Inventory System] Aktif.")
+
+-- ══════════════════════════════════════
+-- TAMBAHAN: PICKUP SYSTEM (untuk testing inventory)
+-- ══════════════════════════════════════
+local PickupSystem = require(Modules:WaitForChild("PickupSystem"))
+
+local pickupSystem = PickupSystem.new()
+
+pickupSystem.onPickup = function(player, itemId, amount)
+	local inv = playerInventories[player.UserId]
+	if inv then
+		inv:addItem(itemId, amount)
+		print(string.format("[Pickup] %s mengambil %s x%d", player.Name, itemId, amount))
+	end
+end
+
+-- ── SPAWN BEBERAPA ITEM TEST DI DEKAT SPAWN ──
+task.wait(2)  -- tunggu world ready
+
+local testSpawns = {
+	{ itemId = "WheatSeed",  amount = 5,  pos = Vector3.new(-208, 1, -228) },
+	{ itemId = "CarrotSeed", amount = 3,  pos = Vector3.new(-200, 1, -228) },
+	{ itemId = "TurnipSeed", amount = 1,  pos = Vector3.new(-192, 1, -228) },
+	{ itemId = "Wheat",      amount = 10, pos = Vector3.new(-208, 1, -218) },
+	{ itemId = "Carrot",     amount = 2,  pos = Vector3.new(-200, 1, -218) },
+}
+
+print("=== SEBELUM SPAWN TEST ITEMS, JUMLAH:", #testSpawns)
+for _, spawn in ipairs(testSpawns) do
+	print("=== MENCOBA SPAWN:", spawn.itemId)
+	local data = ItemData.get(spawn.itemId)
+	print("=== DATA ITEM:", data)
+	pickupSystem:spawnPickup(spawn.itemId, spawn.amount, spawn.pos, data)
+	print("=== SELESAI SPAWN:", spawn.itemId)
+end
+
+print("[PickupSystem] Test items siap dipungut di sekitar (5,3,0)")
+
+-- ══════════════════════════════════════
+-- TAMBAHAN: CURRENCY SYSTEM
+-- ══════════════════════════════════════
+local CurrencyManager = require(Modules:WaitForChild("CurrencyManager"))
+
+local playerCurrencies = {}
+
+local currencyRemote = Instance.new("RemoteEvent")
+currencyRemote.Name   = "CurrencySync"
+currencyRemote.Parent = remotes
+
+local function setupPlayerCurrency(player)
+	local currency = CurrencyManager.new(player)
+	playerCurrencies[player.UserId] = currency
+
+	currency.onChanged = function(amount)
+		currencyRemote:FireClient(player, amount)
+	end
+
+	currencyRemote:FireClient(player, currency:getAmount())
+	print("[Currency] Setup untuk:", player.Name, "| Koin:", currency:getAmount())
+end
+
+Players.PlayerAdded:Connect(setupPlayerCurrency)
+for _, player in ipairs(Players:GetPlayers()) do
+	setupPlayerCurrency(player)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	playerCurrencies[player.UserId] = nil
+end)
+
+print("[Currency System] Aktif.")
+
+-- ══════════════════════════════════════
+-- TAMBAHAN: SHIPPING BIN SYSTEM
+-- ══════════════════════════════════════
+local ShippingBinSystem = require(Modules:WaitForChild("ShippingBinSystem"))
+
+local shippingBin = ShippingBinSystem.new()
+
+-- ── REMOTE EVENTS UNTUK SHIPPING BIN ──
+local binRemotes = Instance.new("Folder")
+binRemotes.Name   = "ShippingBinRemotes"
+binRemotes.Parent = remotes
+
+local OpenBinUI    = Instance.new("RemoteEvent")
+OpenBinUI.Name      = "OpenBinUI"
+OpenBinUI.Parent    = binRemotes
+
+local RequestSell  = Instance.new("RemoteEvent")
+RequestSell.Name    = "RequestSell"
+RequestSell.Parent  = binRemotes
+
+-- ── SAAT BIN DIBUKA: KIRIM ISI INVENTORY YANG BISA DIJUAL ──
+shippingBin.onOpen = function(player)
+	local inv = playerInventories[player.UserId]
+	if not inv then return end
+
+	local snapshot = inv:getSnapshot()
+
+	-- Filter hanya item yang punya sellPrice (hasil panen, bukan tool/seed)
+	local sellableItems = {}
+	for i, slot in pairs(snapshot.slots) do
+		if slot then
+			local data = ItemData.get(slot.itemId)
+			if data and data.sellPrice then
+				table.insert(sellableItems, {
+					slotIndex = i,
+					itemId    = slot.itemId,
+					name      = data.name,
+					count     = slot.count,
+					sellPrice = data.sellPrice,
+				})
+			end
+		end
+	end
+
+	OpenBinUI:FireClient(player, sellableItems)
+end
+
+-- ── HANDLE REQUEST JUAL DARI CLIENT ──
+RequestSell.OnServerEvent:Connect(function(player, slotIndex, sellAmount)
+	local inv      = playerInventories[player.UserId]
+	local currency = playerCurrencies[player.UserId]
+	if not inv or not currency then return end
+
+	local snapshot = inv:getSnapshot()
+	local slot      = snapshot.slots[slotIndex]
+	if not slot then return end
+
+	local data = ItemData.get(slot.itemId)
+	if not data or not data.sellPrice then return end
+
+	sellAmount = math.min(sellAmount, slot.count)
+	if sellAmount <= 0 then return end
+
+	-- Hapus item dari inventory & tambah koin
+	local success = inv:removeFromSlot(slotIndex, sellAmount)
+	if success then
+		local totalPrice = data.sellPrice * sellAmount
+		currency:add(totalPrice)
+		print(string.format("[ShippingBin] %s menjual %s x%d seharga %d koin",
+			player.Name, data.name, sellAmount, totalPrice))
+	end
+end)
+
+-- ── START SCAN BIN ──
+task.wait(1)
+shippingBin:scanAndSetup()
+
+print("[ShippingBin System] Aktif.")
+
+-- ══════════════════════════════════════
+-- TAMBAHAN: SHOP SYSTEM
+-- ══════════════════════════════════════
+local ShopSystem = require(Modules:WaitForChild("ShopSystem"))
+
+local shopSystem = ShopSystem.new()
+
+-- Remote untuk toko
+local shopRemotes = Instance.new("Folder")
+shopRemotes.Name   = "ShopRemotes"
+shopRemotes.Parent = remotes
+
+local OpenShopUI  = Instance.new("RemoteEvent")
+OpenShopUI.Name    = "OpenShopUI"
+OpenShopUI.Parent  = shopRemotes
+
+local RequestBuy  = Instance.new("RemoteEvent")
+RequestBuy.Name    = "RequestBuy"
+RequestBuy.Parent  = shopRemotes
+
+-- Saat toko dibuka — kirim katalog ke client
+shopSystem.onOpen = function(player)
+	-- Kumpulkan semua item yang bisa dibeli
+	local catalog = {}
+	for itemId, data in pairs(ItemData.Items) do
+		if data.buyPrice then
+			table.insert(catalog, {
+				itemId   = itemId,
+				name     = data.name,
+				icon     = data.icon,
+				buyPrice = data.buyPrice,
+				type     = data.type,
+			})
+		end
+	end
+
+	-- Urutkan: tool dulu, lalu seed
+	table.sort(catalog, function(a, b)
+		if a.type == b.type then return a.name < b.name end
+		return a.type == "tool"
+	end)
+
+	OpenShopUI:FireClient(player, catalog)
+end
+
+-- Handle request beli dari client
+RequestBuy.OnServerEvent:Connect(function(player, itemId, amount)
+	print("=== REQUEST BUY DITERIMA:", player.Name, itemId, amount)  -- TAMBAH INI
+	local inv      = playerInventories[player.UserId]
+	local currency = playerCurrencies[player.UserId]
+	print("=== INV:", inv, "| CURRENCY:", currency)  -- TAMBAH INI
+	
+	if not inv or not currency then return end
+	print("=== GAGAL: inv atau currency nil!")  -- TAMBAH INI
+
+	local data = ItemData.get(itemId)
+	if not data or not data.buyPrice then return end
+
+	amount = math.max(1, math.floor(amount or 1))
+
+	local totalCost = data.buyPrice * amount
+	if not currency:hasEnough(totalCost) then
+		-- Kirim notif tidak cukup koin
+		local notifEv = remotes:FindFirstChild("ShowNotif")
+		if notifEv then
+			notifEv:FireClient(player, 
+				string.format("Koin tidak cukup! Butuh %d koin.", totalCost))
+		end
+		return
+	end
+
+	-- Kurangi koin & tambah item
+	currency:remove(totalCost)
+	local success = inv:addItem(itemId, amount)
+
+	if success then
+		print(string.format("[Shop] %s membeli %s x%d seharga %d koin",
+			player.Name, data.name, amount, totalCost))
+	end
+end)
+
+task.wait(1)
+shopSystem:scanAndSetup()
+
+print("[Shop System] Aktif.")
+
+-- ══════════════════════════════════════
+-- TAMBAHAN: FARM PLOT SYSTEM
+-- ══════════════════════════════════════
+local FarmPlotSystem = require(Modules:WaitForChild("FarmPlotSystem"))
+
+local farmSystem = FarmPlotSystem.new()
+_G.farmSystemRef = farmSystem
+
+-- Callback harvest → tambah ke inventory
+farmSystem.onHarvest = function(player, cropId, amount)
+	local inv = playerInventories[player.UserId]
+	if inv then
+		inv:addItem(cropId, amount)
+		print(string.format("[Farm] %s panen %s x%d", player.Name, cropId, amount))
+	end
+end
+
+-- Callback konsumsi bibit
+farmSystem.onConsume = function(player, itemId, amount)
+	local inv = playerInventories[player.UserId]
+	if inv then
+		inv:removeItem(itemId, amount)
+		print(string.format("[Farm] %s pakai %s x%d", player.Name, itemId, amount))
+	end
+end
+
+-- Callback notifikasi ke player
+farmSystem.onNotify = function(player, message)
+	local notifEv = remotes:FindFirstChild("ShowNotif")
+	if notifEv then
+		notifEv:FireClient(player, message)
+	end
+end
+
+task.wait(2)
+farmSystem:scanAndSetup()
+
+print("[FarmPlot System] Aktif.")
+
+-- ══════════════════════════════════════
+-- TAMBAHAN: WATER SYSTEM
+-- ══════════════════════════════════════
+local WaterSystem = require(Modules:WaitForChild("WaterSystem"))
+
+local waterSystem = WaterSystem.new()
+_G.waterSystemRef = waterSystem  -- expose ke FarmPlotSystem
+
+-- Remote untuk sync UI air ke client
+local waterRemote = Instance.new("RemoteEvent")
+waterRemote.Name   = "WaterSync"
+waterRemote.Parent = remotes
+
+waterSystem.onChanged = function(player, current, max)
+	waterRemote:FireClient(player, current, max)
+end
+
+waterSystem.onNotify = function(player, message)
+	local notifEv = remotes:FindFirstChild("ShowNotif")
+	if notifEv then notifEv:FireClient(player, message) end
+end
+
+-- Init water saat player join
+Players.PlayerAdded:Connect(function(player)
+	waterSystem:initPlayer(player)
+end)
+for _, player in ipairs(Players:GetPlayers()) do
+	waterSystem:initPlayer(player)
+end
+Players.PlayerRemoving:Connect(function(player)
+	waterSystem:removePlayer(player)
+end)
+
+task.wait(1)
+waterSystem:scanAndSetup()
+
+print("[Water System] Aktif.")
+
+print("╔══════════════════════════════╗")
+print("║  GameServer aktif            ║")
+print(string.format("║  %s %s | Hari %d | Tahun %d",
+	calendar:getSeason().icon,
+	calendar:getSeason().name,
+	calendar.day,
+	calendar.year))
+print("╚══════════════════════════════╝")
