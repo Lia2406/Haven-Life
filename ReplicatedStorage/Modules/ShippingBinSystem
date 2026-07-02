@@ -1,0 +1,106 @@
+-- ShippingBinSystem.lua
+-- Class: scan Shipping Bin di Workspace, pasang ProximityPrompt
+-- Saat ditekan, server kirim daftar item yang BISA dijual ke client
+
+local ItemData = require(script.Parent:WaitForChild("ItemData"))
+
+local ShippingBinSystem = {}
+ShippingBinSystem.__index = ShippingBinSystem
+
+local CONFIG = {
+	SCAN_NAMES    = {"shippingbin", "storagebin", "shipbin", "petipanen"},
+	MAX_DISTANCE  = 8,
+	HOLD_DURATION = 0.3,
+}
+
+function ShippingBinSystem.new()
+	local self = setmetatable({}, ShippingBinSystem)
+	self.bins      = {}
+	self.onOpen    = nil  -- callback(player) saat bin dibuka
+	return self
+end
+
+function ShippingBinSystem:_isBinName(name)
+	local lower = name:lower():gsub("%s+", "")
+	for _, keyword in ipairs(CONFIG.SCAN_NAMES) do
+		if lower:find(keyword) then return true end
+	end
+	return false
+end
+
+local function getPrimaryOrLargest(model)
+	if model.PrimaryPart then return model.PrimaryPart end
+	local biggest, biggestSize = nil, 0
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") then
+			local vol = p.Size.X * p.Size.Y * p.Size.Z
+			if vol > biggestSize then
+				biggest = p
+				biggestSize = vol
+			end
+		end
+	end
+	return biggest
+end
+
+function ShippingBinSystem:_setupPrompt(anchor)
+	local old = anchor:FindFirstChildOfClass("ProximityPrompt")
+	if old then old:Destroy() end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText            = "Jual Hasil Panen"
+	prompt.ObjectText            = "📦 Shipping Bin"
+	prompt.HoldDuration          = CONFIG.HOLD_DURATION
+	prompt.MaxActivationDistance = CONFIG.MAX_DISTANCE
+	prompt.RequiresLineOfSight   = false
+	prompt.Parent                = anchor
+
+	prompt.Triggered:Connect(function(player)
+		if self.onOpen then
+			self.onOpen(player)
+		end
+	end)
+
+	print("[ShippingBinSystem] Prompt dipasang di:", anchor:GetFullName())
+end
+
+function ShippingBinSystem:scanAndSetup()
+	self.bins = {}
+
+	local function scan(parent)
+		for _, obj in ipairs(parent:GetChildren()) do
+			local name = obj.Name
+
+			if self:_isBinName(name) then
+				local anchor
+				if obj:IsA("Model") then
+					anchor = getPrimaryOrLargest(obj)
+				elseif obj:IsA("BasePart") then
+					anchor = obj
+				end
+
+				if anchor then
+					table.insert(self.bins, anchor)
+					self:_setupPrompt(anchor)
+				end
+			else
+				if obj:IsA("Folder") or obj:IsA("Model") then
+					scan(obj)
+				end
+			end
+		end
+	end
+
+	scan(workspace)
+
+	if #self.bins == 0 then
+		warn("[ShippingBinSystem] ⚠ Tidak ada Shipping Bin ditemukan!")
+		warn("[ShippingBinSystem] Nama harus mengandung: ShippingBin, StorageBin, ShipBin, atau PetiPanen")
+	else
+		print(string.format("[ShippingBinSystem] ✅ %d shipping bin siap.", #self.bins))
+	end
+
+	return #self.bins
+end
+
+return ShippingBinSystem
