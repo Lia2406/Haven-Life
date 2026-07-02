@@ -1,0 +1,235 @@
+-- MayorIntro.lua
+-- Mayor Bob jalan ke player, dialog RPG, lalu jalan ke rumahnya dan menghilang
+-- Hanya terjadi SEKALI saat pertama join (cek via DataStore)
+
+local Players          = game:GetService("Players")
+local TweenService     = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService       = game:GetService("RunService")
+local PathfindingService = game:GetService("PathfindingService")
+
+-- ══════════════════════════════════════
+-- CONFIG
+-- ══════════════════════════════════════
+local MAYOR_NAME    = "Mayor Bob"
+local MAYOR_HOUSE_POS = Vector3.new(-451.344, 19.109, -369.015)
+
+local DIALOGS = {
+	{
+		speaker = "Mayor Bob",
+		text    = "Ah, selamat datang di Desa Haven! Untuk sementara kamu bisa tinggal di rumah ini. Jika kamu sudah yakin menjadi salah satu penduduk desa ini, datangi aku di balai desa untuk membeli surat kependudukan seharga 200 koin.",
+	},
+	{
+		speaker = "Mayor Bob",
+		text    = "Kamu pasti lelah setelah perjalanan panjang. Namun sebelum kamu beristirahat, biarkan aku menjelaskan cara bertahan hidup di desa ini...",
+	},
+	{
+		speaker = "Mayor Bob",
+		text    = "Ladang di tanah ini sudah lama tidak terurus. Kamu boleh menggunakannya. Cangkul dahulu lahannya, tanam bibit, lalu siram setiap hari.",
+	},
+	{
+		speaker = "Mayor Bob",
+		text    = "Kami titipkan ladang itu padamu. Rawatlah dengan baik, dan hasil panenmu bisa dijual di Shipping Bin dekat ladang.",
+	},
+	{
+		speaker = "Mayor Bob",
+		text    = "Aku harus kembali ke balai desa sekarang. Semoga berhasil, pendatang baru! Desa Haven menyambutmu! 🏡",
+	},
+}
+
+-- ══════════════════════════════════════
+-- REMOTE EVENTS (untuk trigger dialog di client)
+-- ══════════════════════════════════════
+local remotes = ReplicatedStorage:WaitForChild("GameRemotes")
+
+local showDialog  = Instance.new("RemoteEvent")
+showDialog.Name   = "ShowDialog"
+showDialog.Parent = remotes
+
+local closeDialog = Instance.new("RemoteEvent")
+closeDialog.Name  = "CloseDialog"
+closeDialog.Parent = remotes
+
+local nextDialog  = Instance.new("RemoteFunction")
+nextDialog.Name   = "NextDialog"
+nextDialog.Parent = remotes
+
+-- ══════════════════════════════════════
+-- FUNGSI GERAK NPC (pakai Humanoid MoveTo)
+-- ══════════════════════════════════════
+local function walkTo(npcModel, targetPos, timeout)
+	local humanoid = npcModel:FindFirstChildOfClass("Humanoid")
+	local hrp      = npcModel:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not hrp then return end
+
+	humanoid:MoveTo(targetPos)
+
+	timeout = timeout or 15
+	local elapsed = 0
+	local connection
+	local done = false
+
+	connection = humanoid.MoveToFinished:Connect(function()
+		done = true
+	end)
+
+	while not done and elapsed < timeout do
+		elapsed = elapsed + task.wait(0.1)
+		-- Cek apakah sudah dekat (fallback)
+		if (hrp.Position - targetPos).Magnitude < 5 then
+			done = true
+		end
+	end
+
+	if connection then connection:Disconnect() end
+end
+
+-- ══════════════════════════════════════
+-- FUNGSI HADAP KE TARGET
+-- ══════════════════════════════════════
+local function faceTarget(npcModel, targetPos)
+	local hrp = npcModel:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	local direction = (targetPos - hrp.Position) * Vector3.new(1, 0, 1)
+	if direction.Magnitude < 0.1 then return end
+
+	local targetCFrame = CFrame.lookAt(hrp.Position, hrp.Position + direction.Unit)
+	TweenService:Create(hrp, TweenInfo.new(0.5), {CFrame = targetCFrame}):Play()
+end
+
+-- ══════════════════════════════════════
+-- FUNGSI DIALOG (server tunggu client klik Next)
+-- ══════════════════════════════════════
+local function runDialog(player, npcModel)
+	local dialogDone = false
+
+	-- Setup NextDialog handler
+	nextDialog.OnServerInvoke = function(callerPlayer)
+		if callerPlayer == player then
+			return true  -- client boleh lanjut
+		end
+	end
+
+	for i, dialog in ipairs(DIALOGS) do
+		-- Kirim dialog ke client
+		showDialog:FireClient(player, {
+			speaker  = dialog.speaker,
+			text     = dialog.text,
+			index    = i,
+			total    = #DIALOGS,
+		})
+
+		-- Hadapkan Mayor ke player
+		local playerChar = player.Character
+		if playerChar then
+			local playerHRP = playerChar:FindFirstChild("HumanoidRootPart")
+			if playerHRP then
+				faceTarget(npcModel, playerHRP.Position)
+			end
+		end
+
+		-- Tunggu client klik Next (via polling RemoteFunction)
+		local waiting = true
+		local timeoutTick = tick()
+
+		nextDialog.OnServerInvoke = function(callerPlayer)
+			if callerPlayer == player then
+				waiting = false
+			end
+		end
+
+		while waiting and (tick() - timeoutTick) < 60 do
+			task.wait(0.1)
+		end
+	end
+
+	-- Tutup dialog
+	closeDialog:FireClient(player)
+	dialogDone = true
+	return dialogDone
+end
+
+-- ══════════════════════════════════════
+-- SEKUENS UTAMA
+-- ══════════════════════════════════════
+local function runMayorSequence(player)
+	-- Cari Mayor Bob
+	local mayorModel = workspace:FindFirstChild(MAYOR_NAME)
+	if not mayorModel then
+		warn("[MayorIntro] Mayor Bob tidak ditemukan di Workspace!")
+		return
+	end
+
+	-- Tunggu karakter player spawn
+	local character = player.Character or player.CharacterAdded:Wait()
+	local playerHRP = character:WaitForChild("HumanoidRootPart", 10)
+	if not playerHRP then return end
+
+	task.wait(2)  -- jeda sebentar biar dunia loading
+
+	-- ── FASE 1: Mayor jalan ke player ──
+	print("[MayorIntro] Mayor berjalan ke player...")
+	local targetPos = playerHRP.Position + Vector3.new(0, 0, 4)
+	walkTo(mayorModel, targetPos, 20)
+
+	-- Berhenti & hadap player
+	task.wait(0.3)
+	faceTarget(mayorModel, playerHRP.Position)
+	task.wait(0.5)
+
+	-- ── FASE 2: Dialog ──
+	print("[MayorIntro] Dialog dimulai...")
+	runDialog(player, mayorModel)
+
+	-- ── FASE 3: Mayor jalan ke rumahnya ──
+	print("[MayorIntro] Mayor berjalan ke rumah...")
+	task.wait(0.5)
+
+	local humanoid = mayorModel:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = 12
+	end
+
+	walkTo(mayorModel, MAYOR_HOUSE_POS, 30)
+
+	-- Fade out dan destroy
+	task.wait(0.5)
+	local mayorParts = mayorModel:GetDescendants()
+	local tweens = {}
+	for _, part in ipairs(mayorParts) do
+		if part:IsA("BasePart") then
+			local t = TweenService:Create(part,
+				TweenInfo.new(1.5),
+				{Transparency = 1}
+			)
+			t:Play()
+			table.insert(tweens, t)
+		end
+	end
+	if #tweens > 0 then
+		tweens[1].Completed:Wait()
+	end
+	mayorModel:Destroy()
+	print("[MayorIntro] Mayor Bob telah pergi.")
+end
+
+-- ══════════════════════════════════════
+-- TRIGGER SAAT PLAYER JOIN
+-- ══════════════════════════════════════
+Players.PlayerAdded:Connect(function(player)
+	-- Untuk testing: selalu muncul
+	-- Nanti bisa ditambah DataStore check agar hanya sekali
+	task.spawn(function()
+		runMayorSequence(player)
+	end)
+end)
+
+-- Untuk player yang sudah ada saat script jalan (testing di Studio)
+for _, player in ipairs(Players:GetPlayers()) do
+	task.spawn(function()
+		runMayorSequence(player)
+	end)
+end
+
+print("[MayorIntro] Aktif.")
