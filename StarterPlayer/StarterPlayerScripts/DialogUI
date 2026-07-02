@@ -1,0 +1,242 @@
+-- DialogUI.lua
+-- Kotak dialog RPG style di bawah layar
+-- Teks muncul satu per satu (typewriter effect)
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+local UserInputService  = game:GetService("UserInputService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local remotes   = ReplicatedStorage:WaitForChild("GameRemotes")
+
+local showDialog  = remotes:WaitForChild("ShowDialog")
+local closeDialog = remotes:WaitForChild("CloseDialog")
+local nextDialog  = remotes:WaitForChild("NextDialog")
+
+-- ══════════════════════════════════════
+-- BUILD UI
+-- ══════════════════════════════════════
+local gui = Instance.new("ScreenGui")
+gui.Name           = "DialogUI"
+gui.ResetOnSpawn   = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.DisplayOrder   = 100
+gui.Parent         = playerGui
+
+-- Background gelap di bawah layar
+local bg = Instance.new("Frame")
+bg.Name                   = "DialogBG"
+bg.Size                   = UDim2.new(1, 0, 0, 160)
+bg.Position               = UDim2.new(0, 0, 1, 10)  -- mulai di bawah layar
+bg.BackgroundColor3       = Color3.fromRGB(15, 10, 5)
+bg.BackgroundTransparency = 0.15
+bg.BorderSizePixel        = 0
+bg.Visible                = true
+bg.Parent                 = gui
+
+-- Border atas
+local topBorder = Instance.new("Frame")
+topBorder.Size             = UDim2.new(1, 0, 0, 3)
+topBorder.BackgroundColor3 = Color3.fromRGB(180, 140, 60)
+topBorder.BorderSizePixel  = 0
+topBorder.Parent           = bg
+
+-- Nama speaker (pojok kiri atas box)
+local speakerBg = Instance.new("Frame")
+speakerBg.Size                   = UDim2.new(0, 180, 0, 32)
+speakerBg.Position               = UDim2.new(0, 20, 0, -16)
+speakerBg.BackgroundColor3       = Color3.fromRGB(140, 100, 40)
+speakerBg.BorderSizePixel        = 0
+speakerBg.Parent                 = bg
+
+local speakerCorner = Instance.new("UICorner")
+speakerCorner.CornerRadius = UDim.new(0, 6)
+speakerCorner.Parent       = speakerBg
+
+local speakerLabel = Instance.new("TextLabel")
+speakerLabel.Size                   = UDim2.new(1, -16, 1, 0)
+speakerLabel.Position               = UDim2.new(0, 10, 0, 0)
+speakerLabel.BackgroundTransparency = 1
+speakerLabel.Text                   = "Mayor Bob"
+speakerLabel.TextColor3             = Color3.fromRGB(255, 240, 200)
+speakerLabel.TextSize               = 16
+speakerLabel.Font                   = Enum.Font.GothamBold
+speakerLabel.TextXAlignment         = Enum.TextXAlignment.Left
+speakerLabel.Parent                 = speakerBg
+
+-- Teks dialog
+local dialogText = Instance.new("TextLabel")
+dialogText.Size                   = UDim2.new(1, -100, 1, -24)
+dialogText.Position               = UDim2.new(0, 24, 0, 20)
+dialogText.BackgroundTransparency = 1
+dialogText.Text                   = ""
+dialogText.TextColor3             = Color3.fromRGB(255, 245, 225)
+dialogText.TextSize               = 16
+dialogText.Font                   = Enum.Font.Gotham
+dialogText.TextXAlignment         = Enum.TextXAlignment.Left
+dialogText.TextYAlignment         = Enum.TextYAlignment.Top
+dialogText.TextWrapped            = true
+dialogText.Parent                 = bg
+
+-- Progress indicator (x/x)
+local progressLabel = Instance.new("TextLabel")
+progressLabel.Size                   = UDim2.new(0, 80, 0, 24)
+progressLabel.Position               = UDim2.new(1, -100, 0, 14)
+progressLabel.BackgroundTransparency = 1
+progressLabel.Text                   = "1/5"
+progressLabel.TextColor3             = Color3.fromRGB(180, 160, 120)
+progressLabel.TextSize               = 13
+progressLabel.Font                   = Enum.Font.Gotham
+progressLabel.TextXAlignment         = Enum.TextXAlignment.Right
+progressLabel.Parent                 = bg
+
+-- Tombol Next
+local nextBtn = Instance.new("TextButton")
+nextBtn.Size                   = UDim2.new(0, 100, 0, 36)
+nextBtn.Position               = UDim2.new(1, -120, 1, -52)
+nextBtn.BackgroundColor3       = Color3.fromRGB(140, 100, 40)
+nextBtn.Text                   = "Lanjut ▶"
+nextBtn.TextColor3             = Color3.fromRGB(255, 240, 200)
+nextBtn.TextSize               = 14
+nextBtn.Font                   = Enum.Font.GothamBold
+nextBtn.Parent                 = bg
+
+local nextCorner = Instance.new("UICorner")
+nextCorner.CornerRadius = UDim.new(0, 8)
+nextCorner.Parent       = nextBtn
+
+-- Indikator "klik untuk lanjut" (berkedip)
+local clickHint = Instance.new("TextLabel")
+clickHint.Size                   = UDim2.new(0, 200, 0, 20)
+clickHint.Position               = UDim2.new(0.5, -100, 1, -28)
+clickHint.BackgroundTransparency = 1
+clickHint.Text                   = "[ SPACE / KLIK untuk lanjut ]"
+clickHint.TextColor3             = Color3.fromRGB(160, 140, 100)
+clickHint.TextSize               = 12
+clickHint.Font                   = Enum.Font.Gotham
+clickHint.Parent                 = bg
+
+-- Efek kedip hint
+task.spawn(function()
+	while true do
+		TweenService:Create(clickHint, TweenInfo.new(0.6), {TextTransparency = 0.8}):Play()
+		task.wait(0.6)
+		TweenService:Create(clickHint, TweenInfo.new(0.6), {TextTransparency = 0}):Play()
+		task.wait(0.6)
+	end
+end)
+
+-- ══════════════════════════════════════
+-- STATE
+-- ══════════════════════════════════════
+local isTyping    = false
+local fullText    = ""
+local canProceed  = false
+local waitingNext = false
+
+-- ══════════════════════════════════════
+-- SLIDE IN / OUT
+-- ══════════════════════════════════════
+local function slideIn()
+	bg.Visible = true
+	TweenService:Create(bg,
+		TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{Position = UDim2.new(0, 0, 1, -168)}
+	):Play()
+end
+
+local function slideOut()
+	local t = TweenService:Create(bg,
+		TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+		{Position = UDim2.new(0, 0, 1, 10)}
+	)
+	t:Play()
+	t.Completed:Wait()
+	bg.Visible = false
+end
+
+-- ══════════════════════════════════════
+-- TYPEWRITER EFFECT
+-- ══════════════════════════════════════
+local function typewrite(text, speed)
+	speed = speed or 0.035
+	isTyping   = true
+	canProceed = false
+	dialogText.Text = ""
+	fullText = text
+
+	for i = 1, #text do
+		dialogText.Text = string.sub(text, 1, i)
+		task.wait(speed)
+		if not isTyping then
+			-- Dipercepat (player klik saat typing)
+			dialogText.Text = text
+			break
+		end
+	end
+
+	isTyping   = false
+	canProceed = true
+end
+
+-- ══════════════════════════════════════
+-- HANDLE KLIK NEXT
+-- ══════════════════════════════════════
+local function handleNext()
+	if isTyping then
+		-- Kalau masih typing, skip ke teks penuh
+		isTyping = false
+		dialogText.Text = fullText
+		task.wait(0.05)
+		canProceed = true
+		return
+	end
+
+	if canProceed and waitingNext then
+		waitingNext = false
+		nextDialog:InvokeServer()
+	end
+end
+
+nextBtn.MouseButton1Click:Connect(handleNext)
+
+-- Keyboard: Space atau Enter untuk lanjut
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.Space or
+		input.KeyCode == Enum.KeyCode.Return then
+		handleNext()
+	end
+end)
+
+-- ══════════════════════════════════════
+-- EVENT HANDLERS
+-- ══════════════════════════════════════
+showDialog.OnClientEvent:Connect(function(data)
+	-- Update UI
+	speakerLabel.Text  = data.speaker or "???"
+	progressLabel.Text = string.format("%d/%d", data.index, data.total)
+
+	if data.index == 1 then
+		slideIn()
+	end
+
+	waitingNext = false
+	canProceed  = false
+
+	-- Typewrite teks
+	task.spawn(function()
+		typewrite(data.text)
+		waitingNext = true
+	end)
+end)
+
+closeDialog.OnClientEvent:Connect(function()
+	slideOut()
+	waitingNext = false
+	canProceed  = false
+end)
+
+print("[DialogUI] Siap.")
