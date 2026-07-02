@@ -1,0 +1,369 @@
+-- InventoryUI.lua
+-- Hotbar 1-9 di bawah layar + tas yang bisa expand
+-- Klik angka 1-9 atau scroll untuk pilih slot
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+local UserInputService  = game:GetService("UserInputService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local remotes    = ReplicatedStorage:WaitForChild("GameRemotes")
+local invRemotes = remotes:WaitForChild("InventoryRemotes")
+
+local InvRemotes = {
+	Sync       = invRemotes:WaitForChild("InventorySync"),
+	SelectSlot = invRemotes:WaitForChild("SelectSlot"),
+	MoveSlot   = invRemotes:WaitForChild("MoveSlot"),
+}
+
+-- ══════════════════════════════════════
+-- STATE
+-- ══════════════════════════════════════
+local currentSnapshot = nil
+local bagOpen         = false
+
+-- ══════════════════════════════════════
+-- BUILD GUI
+-- ══════════════════════════════════════
+local invGui = Instance.new("ScreenGui")
+invGui.Name           = "InventoryUI"
+invGui.ResetOnSpawn   = false
+invGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+invGui.DisplayOrder   = 10
+invGui.Parent         = playerGui
+
+local function corner(parent, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r or 6)
+	c.Parent = parent
+end
+
+local function stroke(parent, color, thick)
+	local s = Instance.new("UIStroke")
+	s.Color     = color or Color3.fromRGB(80, 55, 30)
+	s.Thickness = thick or 2
+	s.Parent    = parent
+end
+
+-- ── HOTBAR CONTAINER (bawah tengah) ──
+local hotbarFrame = Instance.new("Frame")
+hotbarFrame.Name                   = "Hotbar"
+hotbarFrame.Size                   = UDim2.new(0, 9 * 56 + 8, 0, 64)
+hotbarFrame.Position               = UDim2.new(0.5, -(9 * 56 + 8) / 2, 1, -78)
+hotbarFrame.BackgroundColor3       = Color3.fromRGB(35, 24, 14)
+hotbarFrame.BackgroundTransparency = 0.15
+hotbarFrame.BorderSizePixel        = 0
+hotbarFrame.Parent                 = invGui
+corner(hotbarFrame, 12)
+stroke(hotbarFrame, Color3.fromRGB(120, 85, 45), 2)
+
+local hotbarLayout = Instance.new("UIListLayout")
+hotbarLayout.FillDirection      = Enum.FillDirection.Horizontal
+hotbarLayout.Padding            = UDim.new(0, 4)
+hotbarLayout.VerticalAlignment  = Enum.VerticalAlignment.Center
+hotbarLayout.HorizontalAlignment= Enum.HorizontalAlignment.Center
+hotbarLayout.Parent             = hotbarFrame
+
+-- ── BAG BUTTON (toggle tas, di kanan hotbar) ──
+local bagButton = Instance.new("TextButton")
+bagButton.Name                   = "BagButton"
+bagButton.Size                   = UDim2.new(0, 50, 0, 50)
+bagButton.Position               = UDim2.new(1, 60, 1, -78)
+bagButton.AnchorPoint             = Vector2.new(0, 0)
+bagButton.BackgroundColor3       = Color3.fromRGB(35, 24, 14)
+bagButton.BackgroundTransparency = 0.1
+bagButton.Text                   = "🎒"
+bagButton.TextSize               = 24
+bagButton.Font                   = Enum.Font.GothamBold
+bagButton.AutoButtonColor        = true
+bagButton.Parent                 = invGui
+corner(bagButton, 10)
+stroke(bagButton, Color3.fromRGB(120, 85, 45), 2)
+
+-- ── BAG PANEL (grid penuh, hidden by default) ──
+local bagFrame = Instance.new("Frame")
+bagFrame.Name                   = "BagPanel"
+bagFrame.Size                   = UDim2.new(0, 9 * 56 + 24, 0, 3 * 56 + 60)
+bagFrame.Position               = UDim2.new(0.5, -(9 * 56 + 24) / 2, 1, 100)  -- mulai di luar layar (hidden)
+bagFrame.BackgroundColor3       = Color3.fromRGB(30, 20, 10)
+bagFrame.BackgroundTransparency = 0.05
+bagFrame.BorderSizePixel        = 0
+bagFrame.Visible                = false
+bagFrame.Parent                 = invGui
+corner(bagFrame, 14)
+stroke(bagFrame, Color3.fromRGB(140, 100, 50), 2)
+
+local bagTitle = Instance.new("TextLabel")
+bagTitle.Size                   = UDim2.new(1, 0, 0, 30)
+bagTitle.Position               = UDim2.new(0, 0, 0, 6)
+bagTitle.BackgroundTransparency = 1
+bagTitle.Text                   = "🎒 Tas"
+bagTitle.TextColor3             = Color3.fromRGB(240, 215, 170)
+bagTitle.TextSize               = 18
+bagTitle.Font                   = Enum.Font.GothamBold
+bagTitle.Parent                 = bagFrame
+
+local bagGrid = Instance.new("Frame")
+bagGrid.Size                   = UDim2.new(1, -24, 1, -48)
+bagGrid.Position               = UDim2.new(0, 12, 0, 42)
+bagGrid.BackgroundTransparency = 1
+bagGrid.Parent                 = bagFrame
+
+local bagLayout = Instance.new("UIGridLayout")
+bagLayout.CellSize    = UDim2.new(0, 52, 0, 52)
+bagLayout.CellPadding = UDim2.new(0, 4, 0, 4)
+bagLayout.Parent      = bagGrid
+
+-- ══════════════════════════════════════
+-- SLOT FACTORY
+-- ══════════════════════════════════════
+local hotbarSlotFrames = {}
+local bagSlotFrames    = {}
+
+local function createSlotFrame(parent, slotIndex, showNumber)
+	local f = Instance.new("Frame")
+	f.Name                   = "Slot" .. slotIndex
+	f.Size                   = UDim2.new(0, 52, 0, 52)
+	f.BackgroundColor3       = Color3.fromRGB(50, 36, 22)
+	f.BackgroundTransparency = 0.1
+	f.BorderSizePixel        = 0
+	f.Parent                 = parent
+	corner(f, 8)
+
+	local slotStroke = Instance.new("UIStroke")
+	slotStroke.Name      = "SlotStroke"
+	slotStroke.Color     = Color3.fromRGB(90, 65, 35)
+	slotStroke.Thickness = 1.5
+	slotStroke.Parent    = f
+
+	-- Icon item
+	local icon = Instance.new("ImageLabel")
+	icon.Name                   = "Icon"
+	icon.Size                   = UDim2.new(0.7, 0, 0.7, 0)
+	icon.Position               = UDim2.new(0.15, 0, 0.05, 0)
+	icon.BackgroundTransparency = 1
+	icon.Image                  = ""
+	icon.ScaleType               = Enum.ScaleType.Fit
+	icon.Parent                  = f
+
+	-- Count text (pojok kanan bawah)
+	local countLabel = Instance.new("TextLabel")
+	countLabel.Name                   = "Count"
+	countLabel.Size                   = UDim2.new(0, 24, 0, 16)
+	countLabel.Position               = UDim2.new(1, -26, 1, -18)
+	countLabel.BackgroundTransparency = 1
+	countLabel.Text                   = ""
+	countLabel.TextColor3             = Color3.fromRGB(255, 255, 255)
+	countLabel.TextSize               = 12
+	countLabel.Font                   = Enum.Font.GothamBold
+	countLabel.TextStrokeTransparency = 0
+	countLabel.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
+	countLabel.TextXAlignment         = Enum.TextXAlignment.Right
+	countLabel.Parent                 = f
+	
+	local nameTooltip = Instance.new("TextLabel")
+	nameTooltip.Name                   = "NameTooltip"
+	nameTooltip.Size                   = UDim2.new(0, 120, 0, 24)
+	nameTooltip.Position               = UDim2.new(0.5, -60, 0, -30)
+	nameTooltip.BackgroundColor3       = Color3.fromRGB(20, 14, 6)
+	nameTooltip.BackgroundTransparency = 0.1
+	nameTooltip.Text                   = ""
+	nameTooltip.TextColor3             = Color3.fromRGB(255, 230, 180)
+	nameTooltip.TextSize               = 12
+	nameTooltip.Font                   = Enum.Font.Gotham
+	nameTooltip.Visible                = false
+	nameTooltip.ZIndex                 = 50
+	nameTooltip.Parent                 = f
+	corner(nameTooltip, 6)
+
+	-- Tampilkan saat hover
+	local btn = f:FindFirstChildOfClass("TextButton")
+	if not btn then
+		btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1,0,1,0)
+		btn.BackgroundTransparency = 1
+		btn.Text = ""
+		btn.Parent = f
+		btn.ZIndex = 5
+	end
+
+	btn.MouseEnter:Connect(function()
+		nameTooltip.Visible = true
+	end)
+	btn.MouseLeave:Connect(function()
+		nameTooltip.Visible = false
+	end)
+
+	-- Nomor slot (hotbar only)
+	if showNumber then
+		local numLabel = Instance.new("TextLabel")
+		numLabel.Size                   = UDim2.new(0, 16, 0, 14)
+		numLabel.Position               = UDim2.new(0, 2, 0, 1)
+		numLabel.BackgroundTransparency = 1
+		numLabel.Text                   = tostring(slotIndex)
+		numLabel.TextColor3             = Color3.fromRGB(200, 180, 150)
+		numLabel.TextSize               = 11
+		numLabel.Font                   = Enum.Font.Gotham
+		numLabel.TextXAlignment         = Enum.TextXAlignment.Left
+		numLabel.Parent                 = f
+	end
+
+	return f
+end
+
+-- Buat 9 slot hotbar
+for i = 1, 9 do
+	local f = createSlotFrame(hotbarFrame, i, true)
+	f.LayoutOrder = i
+	hotbarSlotFrames[i] = f
+end
+
+-- Buat 27 slot bag (index 10-36)
+for i = 10, 36 do
+	local f = createSlotFrame(bagGrid, i, false)
+	bagSlotFrames[i] = f
+end
+
+-- ══════════════════════════════════════
+-- UPDATE TAMPILAN DARI SNAPSHOT
+-- ══════════════════════════════════════
+local function updateSlotVisual(frame, slotData, isSelected)
+	local icon  = frame:FindFirstChild("Icon")
+	local count = frame:FindFirstChild("Count")
+	local slotStroke = frame:FindFirstChild("SlotStroke")
+	local tooltip = frame:FindFirstChild("NameTooltip")
+
+	if slotData then
+		icon.Image = slotData.icon ~= "" and slotData.icon or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+		count.Text = slotData.count > 1 and tostring(slotData.count) or ""
+		if tooltip then tooltip.Text = slotData.name end
+	else
+		icon.Image = ""
+		count.Text = ""
+		if tooltip then tooltip.Text = "" end
+	end
+
+	if isSelected then
+		slotStroke.Color     = Color3.fromRGB(255, 215, 100)
+		slotStroke.Thickness = 2.5
+		-- Tampilkan tooltip otomatis kalau slot ini aktif & ada isinya
+		if tooltip then
+			tooltip.Visible = slotData ~= nil
+		end
+	else
+		slotStroke.Color     = Color3.fromRGB(90, 65, 35)
+		slotStroke.Thickness = 1.5
+		if tooltip then
+			tooltip.Visible = false
+		end
+	end
+end
+
+-- ══════════════════════════════════════
+-- SCROLL UNTUK GANTI SLOT
+-- ══════════════════════════════════════
+UserInputService.InputChanged:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseWheel then return end
+	if not currentSnapshot then return end
+
+	local delta = input.Position.Z
+	local current = currentSnapshot.selectedSlot
+	local newSlot = current - delta  -- scroll up = slot sebelumnya
+
+	if newSlot < 1 then newSlot = 9 end
+	if newSlot > 9 then newSlot = 1 end
+
+	InvRemotes.SelectSlot:FireServer(newSlot)
+end)
+
+-- ══════════════════════════════════════
+-- KLIK SLOT HOTBAR UNTUK PILIH
+-- ══════════════════════════════════════
+for i = 1, 9 do
+	local frame = hotbarSlotFrames[i]
+	local btn = Instance.new("TextButton")
+	btn.Size                   = UDim2.new(1, 0, 1, 0)
+	btn.BackgroundTransparency = 1
+	btn.Text                   = ""
+	btn.Parent                 = frame
+	btn.ZIndex                  = 5
+
+	btn.MouseButton1Click:Connect(function()
+		InvRemotes.SelectSlot:FireServer(i)
+	end)
+end
+
+-- ══════════════════════════════════════
+-- TOGGLE BAG (buka/tutup tas) — PINDAHKAN KE ATAS SEBELUM INPUT HANDLER
+-- ══════════════════════════════════════
+local function toggleBag()
+	bagOpen = not bagOpen
+
+	if bagOpen then
+		bagFrame.Visible = true
+		bagFrame.Position = UDim2.new(0.5, -(9 * 56 + 24) / 2, 1, 100)
+		TweenService:Create(bagFrame,
+			TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{ Position = UDim2.new(0.5, -(9 * 56 + 24) / 2, 1, -78 - (3*56+60) - 16) }
+		):Play()
+	else
+		local tween = TweenService:Create(bagFrame,
+			TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ Position = UDim2.new(0.5, -(9 * 56 + 24) / 2, 1, 100) }
+		)
+		tween:Play()
+		tween.Completed:Wait()
+		bagFrame.Visible = false
+	end
+end
+
+-- ══════════════════════════════════════
+-- INPUT: PILIH SLOT VIA ANGKA 1-9
+-- ══════════════════════════════════════
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+
+	local keyMap = {
+		[Enum.KeyCode.One]   = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3,
+		[Enum.KeyCode.Four]  = 4, [Enum.KeyCode.Five] = 5, [Enum.KeyCode.Six]   = 6,
+		[Enum.KeyCode.Seven] = 7, [Enum.KeyCode.Eight] = 8, [Enum.KeyCode.Nine] = 9,
+	}
+
+	local slotNum = keyMap[input.KeyCode]
+	if slotNum then
+		InvRemotes.SelectSlot:FireServer(slotNum)
+	end
+
+	if input.KeyCode == Enum.KeyCode.B then
+		toggleBag()  -- sekarang sudah dikenal karena dideklarasikan di atas
+	end
+end)
+
+-- ══════════════════════════════════════
+-- REFRESH UI DARI SNAPSHOT SERVER
+-- ══════════════════════════════════════
+local function refreshUI(snapshot)
+	currentSnapshot = snapshot
+
+	for i = 1, snapshot.hotbarSlots do
+		local isSelected = (i == snapshot.selectedSlot)
+		updateSlotVisual(hotbarSlotFrames[i], snapshot.slots[i], isSelected)
+	end
+
+	for i = snapshot.hotbarSlots + 1, snapshot.totalSlots do
+		updateSlotVisual(bagSlotFrames[i], snapshot.slots[i], false)
+	end
+end
+
+-- ══════════════════════════════════════
+-- SYNC DARI SERVER
+-- ══════════════════════════════════════
+InvRemotes.Sync.OnClientEvent:Connect(function(snapshot)
+	refreshUI(snapshot)
+end)
+
+print("[InventoryUI] Siap.")
