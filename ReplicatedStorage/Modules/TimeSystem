@@ -1,0 +1,129 @@
+-- TimeSystem.lua
+-- Class: mengatur ClockTime Lighting dan warna ambient per jam & musim
+-- Tidak tahu soal hari/kalender — murni urusan jam & cahaya
+
+local Lighting   = game:GetService("Lighting")
+
+local TimeSystem = {}
+TimeSystem.__index = TimeSystem
+
+local CONFIG = {
+	CYCLE_SPEED   = 60,    -- 60 = 1 menit real → 1 jam game
+	TICK_RATE     = 0.06,  -- seberapa sering update (detik)
+	MORNING_TIME  = 6.0,   -- jam saat bangun setelah tidur
+}
+
+-- Warna ambient per jam (urut dari paling pagi)
+local TIME_AMBIENTS = {
+	{ hour =  5.5, amb = Color3.fromRGB(190, 150, 110), out = Color3.fromRGB(210, 170, 130) }, -- fajar
+	{ hour =  7.0, amb = Color3.fromRGB(160, 160, 140), out = Color3.fromRGB(190, 190, 170) }, -- pagi
+	{ hour = 12.0, amb = Color3.fromRGB(150, 155, 160), out = Color3.fromRGB(180, 185, 200) }, -- siang
+	{ hour = 17.0, amb = Color3.fromRGB(180, 110,  70), out = Color3.fromRGB(200, 120,  80) }, -- senja
+	{ hour = 19.5, amb = Color3.fromRGB( 25,  30,  55), out = Color3.fromRGB( 15,  20,  45) }, -- malam
+}
+
+-- Warna overlay per musim (dicampur dengan warna jam)
+local SEASON_TINT = {
+	[1] = Color3.fromRGB(  0, 15,  0),   -- Semi: sedikit lebih hijau
+	[2] = Color3.fromRGB( 15, 10,  0),   -- Panas: sedikit lebih kuning
+	[3] = Color3.fromRGB( 20,  5,  0),   -- Gugur: sedikit lebih oranye
+	[4] = Color3.fromRGB(  0,  0, 20),   -- Dingin: sedikit lebih biru
+}
+
+-- ── CONSTRUCTOR ──
+function TimeSystem.new()
+	local self       = setmetatable({}, TimeSystem)
+	self.clockTime   = 6.0
+	self.seasonIndex = 1
+	self.running     = false
+	self.onMidnight  = nil   -- callback saat jam melewati 00:00
+	return self
+end
+
+-- ── SET WAKTU LANGSUNG ──
+function TimeSystem:setTime(hour)
+	self.clockTime     = hour
+	Lighting.ClockTime = hour
+end
+
+-- ── SKIP KE PAGI ──
+function TimeSystem:skipToMorning()
+	self:setTime(CONFIG.MORNING_TIME)
+end
+
+-- ── UPDATE SEASON (dipanggil dari luar saat hari ganti) ──
+function TimeSystem:setSeason(seasonIndex)
+	self.seasonIndex = seasonIndex
+end
+
+-- ── INTERPOLASI WARNA AMBIENT BERDASARKAN JAM ──
+function TimeSystem:_updateAmbient()
+	local t    = self.clockTime
+	local amb  = TIME_AMBIENTS[1].amb
+	local out  = TIME_AMBIENTS[1].out
+
+	for i = #TIME_AMBIENTS, 1, -1 do
+		if t >= TIME_AMBIENTS[i].hour then
+			amb = TIME_AMBIENTS[i].amb
+			out = TIME_AMBIENTS[i].out
+			break
+		end
+	end
+
+	-- Terapkan tint musim
+	local tint = SEASON_TINT[self.seasonIndex] or SEASON_TINT[1]
+	Lighting.Ambient        = Color3.new(
+		math.min(1, amb.R + tint.R/255),
+		math.min(1, amb.G + tint.G/255),
+		math.min(1, amb.B + tint.B/255)
+	)
+	Lighting.OutdoorAmbient = Color3.new(
+		math.min(1, out.R + tint.R/255),
+		math.min(1, out.G + tint.G/255),
+		math.min(1, out.B + tint.B/255)
+	)
+end
+
+-- ── MULAI LOOP WAKTU ──
+function TimeSystem:start()
+	if self.running then return end
+	self.running = true
+
+	local hoursPerTick = (CONFIG.CYCLE_SPEED / 3600) * CONFIG.TICK_RATE
+	local midnightLock = false
+
+	task.spawn(function()
+		while self.running do
+			task.wait(CONFIG.TICK_RATE)
+
+			local prev = self.clockTime
+			self.clockTime = prev + hoursPerTick
+
+			-- Deteksi tengah malam
+			if self.clockTime >= 24 then
+				self.clockTime = self.clockTime - 24
+				if not midnightLock then
+					midnightLock = true
+					if self.onMidnight then
+						self.onMidnight()
+					end
+					task.delay(1, function() midnightLock = false end)
+				end
+			end
+
+			Lighting.ClockTime = self.clockTime
+			self:_updateAmbient()
+		end
+	end)
+end
+
+-- ── STOP LOOP ──
+function TimeSystem:stop()
+	self.running = false
+end
+
+function TimeSystem:getHour()
+	return self.clockTime
+end
+
+return TimeSystem
