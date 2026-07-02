@@ -1,0 +1,339 @@
+-- FarmPlotSystem.lua
+
+local FarmPlotSystem = {}
+FarmPlotSystem.__index = FarmPlotSystem
+
+local ItemData = require(script.Parent:WaitForChild("ItemData"))
+
+local CONFIG = {
+	PLOT_NAMES   = {"mesh_petak", "farmplot", "petak", "plot", "tanah", "kering"},
+	MAX_DISTANCE = 8,
+
+	GROW_DAYS = {
+		WheatSeed  = 3,
+		CarrotSeed = 2,
+		TurnipSeed = 4,
+	},
+
+	STATE_COLORS = {
+		Dry     = Color3.fromRGB(120, 85,  50),
+		Plowed  = Color3.fromRGB(75,  48,  22),
+		Planted = Color3.fromRGB(65,  42,  18),
+		Watered = Color3.fromRGB(45,  30,  12),
+		Mature  = Color3.fromRGB(55,  110, 35),
+		Wilted  = Color3.fromRGB(100, 80,  40),
+	},
+}
+
+-- ══════════════════════════════════════
+-- PLOT OBJECT
+-- ══════════════════════════════════════
+local Plot = {}
+Plot.__index = Plot
+
+function Plot.new(part)
+	local self     = setmetatable({}, Plot)
+	self.part      = part
+	self.state     = "Dry"
+	self.cropId    = nil
+	self.daysToGrow      = 0
+	self.wateredThisDay  = false
+	self.prompt    = nil
+	self.billboard = nil
+	self:_rebuild()
+	return self
+end
+
+function Plot:_rebuild()
+	self:_setupBillboard()
+	self:_setupPrompt()
+	self:_refreshVisual()
+end
+
+function Plot:_setupBillboard()
+	local old = self.part:FindFirstChild("PlotBillboard")
+	if old then old:Destroy() end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name          = "PlotBillboard"
+	bb.Size          = UDim2.new(0, 100, 0, 36)
+	bb.StudsOffset   = Vector3.new(0, 2.5, 0)
+	bb.AlwaysOnTop   = false
+	bb.Parent        = self.part
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size                   = UDim2.new(1, 0, 1, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text                   = ""
+	lbl.TextColor3             = Color3.fromRGB(255, 255, 255)
+	lbl.TextStrokeTransparency = 0
+	lbl.TextSize               = 13
+	lbl.Font                   = Enum.Font.GothamBold
+	lbl.Parent                 = bb
+
+	self.billboard = lbl
+end
+
+function Plot:_setupPrompt()
+	local old = self.part:FindFirstChildOfClass("ProximityPrompt")
+	if old then old:Destroy() end
+
+	local p = Instance.new("ProximityPrompt")
+	p.HoldDuration          = 0.4
+	p.MaxActivationDistance = CONFIG.MAX_DISTANCE
+	p.RequiresLineOfSight   = false
+	p.Parent                = self.part
+	self.prompt             = p
+	return p
+end
+
+function Plot:_refreshVisual()
+	-- Warna part
+	if self.part:IsA("BasePart") then
+		local col = CONFIG.STATE_COLORS[self.state]
+		if col then self.part.Color = col end
+	end
+
+	-- Prompt text
+	if self.prompt then
+		local action, obj = "", "🌿 Petak"
+		if self.state == "Dry" then
+			action = "⛏ Cangkul"
+		elseif self.state == "Plowed" then
+			action = "🌱 Tanam Bibit"
+		elseif self.state == "Planted" then
+			action = "💧 Siram!"
+		elseif self.state == "Watered" then
+			action = string.format("⏳ %d hari lagi", self.daysToGrow)
+		elseif self.state == "Mature" then
+			action = "🌾 Panen!"
+			obj    = "🌾 Siap Panen"
+		elseif self.state == "Wilted" then
+			action = "⛏ Cangkul (layu)"
+		end
+		self.prompt.ActionText = action
+		self.prompt.ObjectText = obj
+	end
+
+	-- Billboard
+	if self.billboard then
+		if self.state == "Mature" then
+			self.billboard.Text       = "🌾 SIAP PANEN!"
+			self.billboard.TextColor3 = Color3.fromRGB(255, 230, 80)
+		elseif self.state == "Planted" then
+			self.billboard.Text       = "💧 Butuh Air"
+			self.billboard.TextColor3 = Color3.fromRGB(100, 180, 255)
+		elseif self.state == "Watered" then
+			self.billboard.Text       = string.format("🌱 %d hari", self.daysToGrow)
+			self.billboard.TextColor3 = Color3.fromRGB(150, 255, 150)
+		elseif self.state == "Wilted" then
+			self.billboard.Text       = "💀 Layu!"
+			self.billboard.TextColor3 = Color3.fromRGB(255, 120, 80)
+		else
+			self.billboard.Text = ""
+		end
+	end
+end
+
+-- ── INTERAKSI ──
+function Plot:tryInteract(player, heldItemId)
+	-- heldItemId = string id item atau nil
+
+	if self.state == "Dry" or self.state == "Wilted" then
+		if heldItemId == "Hoe" then
+			self.state    = "Plowed"
+			self.cropId   = nil
+			self.daysToGrow = 0
+			self.wateredThisDay = false
+			self:_refreshVisual()
+			return true, "✅ Lahan dicangkul!", nil, nil
+		end
+		return false, "⛏ Kamu butuh Cangkul!", nil, nil
+
+	elseif self.state == "Plowed" then
+		local seeds = {WheatSeed=true, CarrotSeed=true, TurnipSeed=true}
+		if heldItemId and seeds[heldItemId] then
+			self.state      = "Planted"
+			self.cropId     = heldItemId
+			self.daysToGrow = CONFIG.GROW_DAYS[heldItemId] or 3
+			self.wateredThisDay = false
+			self:_refreshVisual()
+			-- consume 1 bibit
+			return true, "🌱 Bibit ditanam!", {itemId=heldItemId, amount=1}, nil
+		end
+		return false, "🌱 Pilih bibit di hotbar!", nil, nil
+		
+	elseif self.state == "Planted" then
+		if heldItemId == "WateringCan" then
+			-- Cek air tersisa via callback
+			if self._checkWater and not self._checkWater() then
+				return false, "🪣 Penyiram kosong! Isi ulang di sumur.", nil, nil
+			end
+			self.state          = "Watered"
+			self.wateredThisDay = true
+			self:_refreshVisual()
+			-- Kurangi air
+			if self._useWater then self._useWater() end
+			return true, "💧 Tanaman disiram!", nil, nil
+		end
+		return false, "💧 Pakai Penyiram dulu!", nil, nil
+
+	elseif self.state == "Watered" then
+		if heldItemId == "WateringCan" then
+			-- Sudah disiram hari ini
+			return false, string.format("✅ Sudah disiram. %d hari lagi 🌱", self.daysToGrow), nil, nil
+		end
+		return false, string.format("⏳ Tunggu %d hari lagi 🌱", self.daysToGrow), nil, nil
+
+	elseif self.state == "Mature" then
+		-- Panen dengan tool apapun
+		local cropId = self.cropId and self.cropId:gsub("Seed", "") or "Wheat"
+		self.state   = "Dry"
+		self.cropId  = nil
+		self.daysToGrow = 0
+		self.wateredThisDay = false
+		self:_refreshVisual()
+		return true, "🌾 Panen berhasil!", nil, {itemId=cropId, amount=3}
+	end
+
+	return false, "Tidak ada yang bisa dilakukan", nil, nil
+end
+
+-- ── GANTI HARI ──
+function Plot:onDayPassed()
+	if self.state == "Watered" then
+		-- Sudah disiram kemarin → countdown
+		self.daysToGrow     = self.daysToGrow - 1
+		self.wateredThisDay = false  -- reset, butuh siram lagi hari ini
+
+		if self.daysToGrow <= 0 then
+			self.state = "Mature"
+		else
+			-- Kembali ke Planted (butuh disiram lagi hari ini)
+			self.state = "Planted"
+		end
+		self:_refreshVisual()
+
+	elseif self.state == "Planted" then
+		-- Tidak disiram → layu
+		self.state = "Wilted"
+		self:_refreshVisual()
+
+	elseif self.state == "Mature" then
+		-- Tetap mature sampai dipanen
+	end
+end
+
+-- ══════════════════════════════════════
+-- SYSTEM CLASS
+-- ══════════════════════════════════════
+function FarmPlotSystem.new()
+	local self = setmetatable({}, FarmPlotSystem)
+	self.plots     = {}
+	self.onHarvest = nil
+	self.onConsume = nil
+	self.onNotify  = nil
+	return self
+end
+
+function FarmPlotSystem:_isPlotName(name)
+	local lower = name:lower()
+	for _, kw in ipairs(CONFIG.PLOT_NAMES) do
+		if lower:find(kw, 1, true) then return true end
+	end
+	return false
+end
+
+function FarmPlotSystem:_getHeldItemId(player)
+	local inv = _G.GetPlayerInventory and _G.GetPlayerInventory(player)
+	if not inv then return nil end
+	local slot = inv:getSelectedItem()
+	return slot and slot.itemId or nil
+end
+
+function FarmPlotSystem:_registerPlot(part)
+	local plot = Plot.new(part)
+	self.plots[part] = plot
+
+	plot.prompt.Triggered:Connect(function(player)
+		local heldId = self:_getHeldItemId(player)
+
+		-- Inject water callbacks ke plot sementara
+		local ws = _G.waterSystemRef
+		plot._checkWater = function()
+			return ws and ws:hasWater(player) or true
+		end
+		plot._useWater = function()
+			if ws then ws:useWater(player) end
+		end
+
+		local ok, msg, consume, harvest = plot:tryInteract(player, heldId)
+
+		-- Cleanup callbacks
+		plot._checkWater = nil
+		plot._useWater   = nil
+
+		if self.onNotify then
+			self.onNotify(player, msg)
+		end
+		if ok then
+			if consume and self.onConsume then
+				self.onConsume(player, consume.itemId, consume.amount)
+			end
+			if harvest and self.onHarvest then
+				self.onHarvest(player, harvest.itemId, harvest.amount)
+			end
+		end
+	end)
+
+	return plot
+end
+
+function FarmPlotSystem:scanAndSetup()
+	self.plots = {}
+	local count = 0
+
+	local function scan(parent)
+		for _, obj in ipairs(parent:GetChildren()) do
+			if obj:IsA("BasePart") and self:_isPlotName(obj.Name) then
+				self:_registerPlot(obj)
+				count += 1
+			elseif (obj:IsA("Model") or obj:IsA("Folder")) then
+				if self:_isPlotName(obj.Name) then
+					-- Cari BasePart terbesar di dalam model
+					local biggest, biggestVol = nil, 0
+					for _, d in ipairs(obj:GetDescendants()) do
+						if d:IsA("BasePart") then
+							local v = d.Size.X * d.Size.Y * d.Size.Z
+							if v > biggestVol then
+								biggest = d
+								biggestVol = v
+							end
+						end
+					end
+					if biggest then
+						self:_registerPlot(biggest)
+						count += 1
+					end
+				else
+					scan(obj)
+				end
+			end
+		end
+	end
+
+	scan(workspace)
+	print(string.format("[FarmPlotSystem] ✅ %d petak tanah siap.", count))
+	return count
+end
+
+function FarmPlotSystem:advanceDay()
+	local count = 0
+	for _, plot in pairs(self.plots) do
+		plot:onDayPassed()
+		count += 1
+	end
+	print(string.format("[FarmPlotSystem] Hari berganti — %d petak diupdate.", count))
+end
+
+return FarmPlotSystem
