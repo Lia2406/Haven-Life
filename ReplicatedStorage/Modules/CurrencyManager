@@ -1,0 +1,59 @@
+-- CurrencyManager.lua
+-- Class: mengatur koin player, sync ke leaderstats Roblox + RemoteEvent
+
+local CurrencyManager = {}
+CurrencyManager.__index = CurrencyManager
+
+function CurrencyManager.new(player)
+	local self = setmetatable({}, CurrencyManager)
+	self.player = player
+	self.coins  = 100  -- starting coin
+
+	-- Buat leaderstats (otomatis muncul di scoreboard Roblox kanan atas)
+	local leaderstats = Instance.new("Folder")
+	leaderstats.Name   = "leaderstats"
+	leaderstats.Parent = player
+
+	local coinValue = Instance.new("IntValue")
+	coinValue.Name   = "Koin"
+	coinValue.Value  = self.coins
+	coinValue.Parent = leaderstats
+
+	self.coinValue = coinValue
+
+	self.onChanged = nil  -- callback(newAmount) untuk sync HUD custom
+
+	return self
+end
+
+function CurrencyManager:getAmount()
+	return self.coins
+end
+
+function CurrencyManager:add(amount)
+	if amount <= 0 then return end
+	self.coins = self.coins + amount
+	self.coinValue.Value = self.coins
+	self:_notify()
+end
+
+function CurrencyManager:remove(amount)
+	if amount <= 0 then return false end
+	if self.coins < amount then return false end
+	self.coins = self.coins - amount
+	self.coinValue.Value = self.coins
+	self:_notify()
+	return true
+end
+
+function CurrencyManager:hasEnough(amount)
+	return self.coins >= amount
+end
+
+function CurrencyManager:_notify()
+	if self.onChanged then
+		self.onChanged(self.coins)
+	end
+end
+
+return CurrencyManager
