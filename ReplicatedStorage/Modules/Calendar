@@ -1,0 +1,86 @@
+-- Calendar.lua
+-- Class: menyimpan state hari/musim/tahun dan logika pergantian hari
+-- Tidak tahu soal Lighting, tidak tahu soal UI — murni data
+
+local Calendar = {}
+Calendar.__index = Calendar
+
+local CONFIG = {
+	DAYS_PER_SEASON = 30,
+	SEASONS = {
+		{ name = "Musim Semi",   icon = "🌱", color = Color3.fromRGB(150, 220, 130) },
+		{ name = "Musim Panas",  icon = "☀️",  color = Color3.fromRGB(220, 200, 100) },
+		{ name = "Musim Gugur",  icon = "🍂", color = Color3.fromRGB(220, 150, 80)  },
+		{ name = "Musim Dingin", icon = "❄️",  color = Color3.fromRGB(180, 210, 240) },
+	},
+}
+
+-- ── CONSTRUCTOR ──
+function Calendar.new()
+	local self = setmetatable({}, Calendar)
+	self.day         = 1
+	self.seasonIndex = 1
+	self.year        = 1
+	self.totalDays   = 1
+	-- Callback dipanggil setiap ganti hari (diset dari luar)
+	self.onDayChanged = nil
+	return self
+end
+
+-- ── GETTER ──
+function Calendar:getSeason()
+	return CONFIG.SEASONS[self.seasonIndex]
+end
+
+function Calendar:getSnapshot()
+	local season = self:getSeason()
+	return {
+		day         = self.day,
+		seasonIndex = self.seasonIndex,
+		seasonName  = season.name,
+		seasonIcon  = season.icon,
+		seasonColor = season.color,
+		year        = self.year,
+		totalDays   = self.totalDays,
+	}
+end
+
+-- ── ADVANCE DAY ──
+function Calendar:advance(source)
+	source = source or "unknown"
+
+	self.totalDays += 1
+	self.day       += 1
+
+	local seasonChanged = false
+	local yearChanged   = false
+
+	if self.day > CONFIG.DAYS_PER_SEASON then
+		self.day          = 1
+		self.seasonIndex += 1
+		seasonChanged     = true
+
+		if self.seasonIndex > #CONFIG.SEASONS then
+			self.seasonIndex = 1
+			self.year       += 1
+			yearChanged      = true
+		end
+	end
+
+	local snap = self:getSnapshot()
+
+	print(string.format(
+		"[Calendar] %s %s | Hari %d | Tahun %d | via: %s%s",
+		snap.seasonIcon, snap.seasonName, snap.day, snap.year, source,
+		yearChanged and " ← TAHUN BARU!" or seasonChanged and " ← Musim baru!" or ""
+		))
+
+	-- Panggil callback kalau ada
+	if self.onDayChanged then
+		self.onDayChanged(snap, source)
+	end
+
+	return snap
+end
+
+return Calendar
