@@ -1,0 +1,129 @@
+-- BedSystem.lua
+--Untuk logic tidur agar mengganti hari game
+local BedSystem = {}
+BedSystem.__index = BedSystem
+
+local CONFIG = {
+	SCAN_NAMES         = {"bed", "kasur", "tempattidur"},
+	HOLD_DURATION      = 1.5,
+	MAX_DISTANCE       = 8,
+	PROMPT_ACTION_TEXT = "Tidur",
+	PROMPT_OBJECT_TEXT = "💤 Kasur",
+}
+
+function BedSystem.new()
+	local self   = setmetatable({}, BedSystem)
+	self.beds    = {}
+	self.onSleep = nil
+	return self
+end
+
+-- Cek nama mengandung keyword kasur
+function BedSystem:_isBedName(name)
+	local lower = name:lower():gsub("%s+", "")
+	for _, keyword in ipairs(CONFIG.SCAN_NAMES) do
+		if lower:find(keyword) then return true end
+	end
+	return false
+end
+
+-- Cari Part terbesar dalam Model untuk jadi anchor ProximityPrompt
+local function getPrimaryOrLargest(model)
+	if model.PrimaryPart then return model.PrimaryPart end
+	local biggest, biggestSize = nil, 0
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") then
+			local vol = p.Size.X * p.Size.Y * p.Size.Z
+			if vol > biggestSize then
+				biggest     = p
+				biggestSize = vol
+			end
+		end
+	end
+	return biggest
+end
+
+function BedSystem:_setupPrompt(anchor, displayName)
+	local old = anchor:FindFirstChildOfClass("ProximityPrompt")
+	if old then old:Destroy() end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText            = CONFIG.PROMPT_ACTION_TEXT
+	prompt.ObjectText            = CONFIG.PROMPT_OBJECT_TEXT
+	prompt.KeyboardKeyCode       = Enum.KeyCode.E
+	prompt.HoldDuration          = CONFIG.HOLD_DURATION
+	prompt.MaxActivationDistance = CONFIG.MAX_DISTANCE
+	prompt.RequiresLineOfSight   = false
+	prompt.Parent                = anchor
+
+	prompt.Triggered:Connect(function(_player)
+		if self.onSleep then
+			self.onSleep(anchor)
+		end
+	end)
+
+	print("[BedSystem] Prompt dipasang di:", displayName or anchor:GetFullName())
+end
+
+function BedSystem:scanAndSetup()
+	self.beds = {}
+
+	-- Folder yang di-skip saat scan (berat & tidak ada kasur)
+	local skipNames = {
+		ikan        = true,
+		["Fish Folder"]           = true,
+		["Nature Pack"]           = true,
+		["House Furnishing Pack"] = true,
+		dunia                     = true,
+		["Lahan Bertani"]         = true,
+		Toko                      = true,
+		["pembatas dunia"]        = true,
+	}
+
+	local function scan(parent)
+		for _, obj in ipairs(parent:GetChildren()) do
+			-- Skip folder berat
+			if skipNames[obj.Name] then continue end
+
+			local name = obj.Name
+
+			if self:_isBedName(name) then
+				-- Bisa Model atau BasePart
+				if obj:IsA("Model") then
+					local anchor = getPrimaryOrLargest(obj)
+					if anchor then
+						table.insert(self.beds, anchor)
+						self:_setupPrompt(anchor, obj:GetFullName())
+					else
+						warn("[BedSystem] Model kasur tidak punya Part:", obj:GetFullName())
+					end
+				elseif obj:IsA("BasePart") then
+					table.insert(self.beds, obj)
+					self:_setupPrompt(obj, obj:GetFullName())
+				end
+			else
+				-- Cari lebih dalam ke folder/model lain
+				if obj:IsA("Folder") or obj:IsA("Model") then
+					scan(obj)
+				end
+			end
+		end
+	end
+
+	scan(workspace)
+
+	if #self.beds == 0 then
+		warn("[BedSystem] ⚠ Tidak ada kasur ditemukan!")
+		warn("[BedSystem] Pastikan nama Model/Part mengandung: bed, kasur, tempattidur")
+	else
+		print(string.format("[BedSystem] ✅ %d kasur siap dipakai.", #self.beds))
+	end
+
+	return #self.beds
+end
+
+function BedSystem:getBedCount()
+	return #self.beds
+end
+
+return BedSystem
