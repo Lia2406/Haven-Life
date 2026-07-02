@@ -1,0 +1,109 @@
+-- ShopSystem.lua
+-- Class: scan ShopNPC + ShopCounter, pasang ProximityPrompt keduanya
+
+local ShopSystem = {}
+ShopSystem.__index = ShopSystem
+
+local CONFIG = {
+	NPC_NAMES     = {"shopnpc", "shopkeeper", "penjual", "merchant"},
+	COUNTER_NAMES = {"shopcounter", "counter", "meja"},
+	MAX_DISTANCE  = 8,
+	HOLD_DURATION = 0.3,
+}
+
+function ShopSystem.new()
+	local self    = setmetatable({}, ShopSystem)
+	self.triggers = {}   -- semua anchor yang punya prompt
+	self.onOpen   = nil  -- callback(player)
+	return self
+end
+
+function ShopSystem:_matchName(name, keywords)
+	local lower = name:lower():gsub("%s+", "")
+	for _, kw in ipairs(keywords) do
+		if lower:find(kw) then return true end
+	end
+	return false
+end
+
+local function getPrimaryOrLargest(model)
+	if model.PrimaryPart then return model.PrimaryPart end
+	local biggest, biggestSize = nil, 0
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") then
+			local vol = p.Size.X * p.Size.Y * p.Size.Z
+			if vol > biggestSize then
+				biggest     = p
+				biggestSize = vol
+			end
+		end
+	end
+	return biggest
+end
+
+local function getHeadOrRoot(model)
+	-- Untuk NPC, pasang prompt di Head biar muncul di atas kepala
+	local head = model:FindFirstChild("Head")
+	if head then return head end
+	local hrp  = model:FindFirstChild("HumanoidRootPart")
+	if hrp then return hrp end
+	return getPrimaryOrLargest(model)
+end
+
+function ShopSystem:_setupPrompt(anchor, isNPC)
+	local old = anchor:FindFirstChildOfClass("ProximityPrompt")
+	if old then old:Destroy() end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText            = "Shop"
+	prompt.ObjectText            = isNPC and "🧑‍🌾 Penjual" or "🏪 Toko"
+	prompt.HoldDuration          = CONFIG.HOLD_DURATION
+	prompt.MaxActivationDistance = CONFIG.MAX_DISTANCE
+	prompt.RequiresLineOfSight   = false
+	prompt.Parent                = anchor
+
+	prompt.Triggered:Connect(function(player)
+		if self.onOpen then
+			self.onOpen(player)
+		end
+	end)
+
+	print("[ShopSystem] Prompt dipasang di:", anchor:GetFullName())
+	table.insert(self.triggers, anchor)
+end
+
+function ShopSystem:scanAndSetup()
+	self.triggers = {}
+
+	local function scan(parent)
+		for _, obj in ipairs(parent:GetChildren()) do
+			local name = obj.Name
+
+			if self:_matchName(name, CONFIG.NPC_NAMES) and obj:IsA("Model") then
+				local anchor = getHeadOrRoot(obj)
+				if anchor then self:_setupPrompt(anchor, true) end
+
+			elseif self:_matchName(name, CONFIG.COUNTER_NAMES) then
+				local anchor
+				if obj:IsA("Model") then
+					anchor = getPrimaryOrLargest(obj)
+				elseif obj:IsA("BasePart") then
+					anchor = obj
+				end
+				if anchor then self:_setupPrompt(anchor, false) end
+
+			else
+				if obj:IsA("Folder") or obj:IsA("Model") then
+					scan(obj)
+				end
+			end
+		end
+	end
+
+	scan(workspace)
+
+	print(string.format("[ShopSystem] ✅ %d trigger toko siap.", #self.triggers))
+	return #self.triggers
+end
+
+return ShopSystem
