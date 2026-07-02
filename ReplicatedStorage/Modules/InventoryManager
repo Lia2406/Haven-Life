@@ -1,0 +1,235 @@
+-- InventoryManager.lua
+-- Class: mengatur slot inventory satu player
+-- Tidak tahu soal UI — murni data & logika stack/add/remove
+
+local ItemData = require(script.Parent:WaitForChild("ItemData"))
+
+local InventoryManager = {}
+InventoryManager.__index = InventoryManager
+
+local CONFIG = {
+	HOTBAR_SLOTS = 9,    -- slot 1-9 di hotbar
+	BAG_SLOTS    = 27,   -- slot tambahan di tas (3 baris x 9)
+}
+
+local TOTAL_SLOTS = CONFIG.HOTBAR_SLOTS + CONFIG.BAG_SLOTS
+
+-- ── CONSTRUCTOR ──
+function InventoryManager.new(player)
+	local self = setmetatable({}, InventoryManager)
+	self.player = player
+
+	-- Array slot: { itemId = "WheatSeed", count = 5 } atau nil kalau kosong
+	self.slots = {}
+	for i = 1, TOTAL_SLOTS do
+		self.slots[i] = nil
+	end
+
+	self.selectedSlot = 1  -- slot hotbar yang lagi dipegang
+
+	-- Callback dipanggil setiap inventory berubah (untuk sync ke client)
+	self.onChanged = nil
+
+	return self
+end
+
+-- ── HELPER: CARI SLOT KOSONG ──
+function InventoryManager:_findEmptySlot()
+	for i = 1, TOTAL_SLOTS do
+		if self.slots[i] == nil then
+			return i
+		end
+	end
+	return nil
+end
+
+-- ── HELPER: CARI SLOT YANG SUDAH ADA ITEM SAMA & BELUM PENUH ──
+function InventoryManager:_findStackableSlot(itemId)
+	local data = ItemData.get(itemId)
+	if not data then return nil end
+
+	for i = 1, TOTAL_SLOTS do
+		local slot = self.slots[i]
+		if slot and slot.itemId == itemId and slot.count < data.maxStack then
+			return i
+		end
+	end
+	return nil
+end
+
+-- ── TAMBAH ITEM ──
+function InventoryManager:addItem(itemId, amount)
+	amount = amount or 1
+	local data = ItemData.get(itemId)
+	if not data then
+		warn("[InventoryManager] Item tidak dikenal:", itemId)
+		return false
+	end
+
+	local remaining = amount
+
+	-- 1. Coba isi ke slot yang sudah ada item sama
+	while remaining > 0 do
+		local stackSlot = self:_findStackableSlot(itemId)
+		if not stackSlot then break end
+
+		local slot     = self.slots[stackSlot]
+		local space     = data.maxStack - slot.count
+		local addAmount = math.min(space, remaining)
+
+		slot.count = slot.count + addAmount
+		remaining  = remaining - addAmount
+	end
+
+	-- 2. Sisa taruh di slot kosong baru
+	while remaining > 0 do
+		local emptySlot = self:_findEmptySlot()
+		if not emptySlot then
+			warn("[InventoryManager] Inventory penuh! Sisa item tidak masuk:", remaining)
+			break
+		end
+
+		local addAmount = math.min(data.maxStack, remaining)
+		self.slots[emptySlot] = { itemId = itemId, count = addAmount }
+		remaining = remaining - addAmount
+	end
+
+	self:_notifyChanged()
+	return remaining == 0  -- true kalau semua berhasil masuk
+end
+
+-- ── HAPUS ITEM (dari slot tertentu) ──
+function InventoryManager:removeFromSlot(slotIndex, amount)
+	amount = amount or 1
+	local slot = self.slots[slotIndex]
+	if not slot then return false end
+
+	slot.count = slot.count - amount
+	if slot.count <= 0 then
+		self.slots[slotIndex] = nil
+	end
+
+	self:_notifyChanged()
+	return true
+end
+
+-- ── HAPUS ITEM BERDASARKAN ID (cari otomatis di slot manapun) ──
+function InventoryManager:removeItem(itemId, amount)
+	amount = amount or 1
+	local remaining = amount
+
+	for i = 1, TOTAL_SLOTS do
+		local slot = self.slots[i]
+		if slot and slot.itemId == itemId then
+			local takeAmount = math.min(slot.count, remaining)
+			slot.count = slot.count - takeAmount
+			remaining  = remaining - takeAmount
+
+			if slot.count <= 0 then
+				self.slots[i] = nil
+			end
+
+			if remaining <= 0 then break end
+		end
+	end
+
+	self:_notifyChanged()
+	return remaining == 0
+end
+
+-- ── CEK APAKAH PUNYA ITEM SEJUMLAH TERTENTU ──
+function InventoryManager:hasItem(itemId, amount)
+	amount = amount or 1
+	local total = 0
+	for i = 1, TOTAL_SLOTS do
+		local slot = self.slots[i]
+		if slot and slot.itemId == itemId then
+			total = total + slot.count
+		end
+	end
+	return total >= amount
+end
+
+-- ── GANTI SELECTED SLOT (hotbar 1-9) ──
+function InventoryManager:selectSlot(slotIndex)
+	if slotIndex < 1 or slotIndex > CONFIG.HOTBAR_SLOTS then return end
+	self.selectedSlot = slotIndex
+	self:_notifyChanged()
+end
+
+-- ── GET ITEM YANG SEDANG DIPEGANG ──
+function InventoryManager:getSelectedItem()
+	return self.slots[self.selectedSlot]
+end
+
+-- ── PINDAH ITEM ANTAR SLOT (drag & drop) ──
+function InventoryManager:moveSlot(fromIndex, toIndex)
+	if fromIndex == toIndex then return end
+
+	local fromSlot = self.slots[fromIndex]
+	local toSlot    = self.slots[toIndex]
+
+	if not fromSlot then return end
+
+	-- Kalau target kosong, pindah langsung
+	if not toSlot then
+		self.slots[toIndex]   = fromSlot
+		self.slots[fromIndex] = nil
+	else
+		-- Kalau item sama & bisa stack, gabungkan
+		local data = ItemData.get(fromSlot.itemId)
+		if toSlot.itemId == fromSlot.itemId and data then
+			local space = data.maxStack - toSlot.count
+			local moveAmount = math.min(space, fromSlot.count)
+
+			toSlot.count = toSlot.count + moveAmount
+			fromSlot.count = fromSlot.count - moveAmount
+
+			if fromSlot.count <= 0 then
+				self.slots[fromIndex] = nil
+			end
+		else
+			-- Item beda, swap saja
+			self.slots[fromIndex] = toSlot
+			self.slots[toIndex]   = fromSlot
+		end
+	end
+
+	self:_notifyChanged()
+end
+
+-- ── SNAPSHOT UNTUK DIKIRIM KE CLIENT ──
+function InventoryManager:getSnapshot()
+	local snapshot = {}
+	for i = 1, TOTAL_SLOTS do
+		local slot = self.slots[i]
+		if slot then
+			local data = ItemData.get(slot.itemId)
+			snapshot[i] = {
+				itemId = slot.itemId,
+				count  = slot.count,
+				name   = data and data.name or slot.itemId,
+				icon   = data and data.icon or "",
+			}
+		else
+			snapshot[i] = nil
+		end
+	end
+
+	return {
+		slots         = snapshot,
+		selectedSlot  = self.selectedSlot,
+		hotbarSlots   = CONFIG.HOTBAR_SLOTS,
+		bagSlots      = CONFIG.BAG_SLOTS,
+		totalSlots    = TOTAL_SLOTS,
+	}
+end
+
+-- ── NOTIFY PERUBAHAN ──
+function InventoryManager:_notifyChanged()
+	if self.onChanged then
+		self.onChanged(self:getSnapshot())
+	end
+end
+
+return InventoryManager
