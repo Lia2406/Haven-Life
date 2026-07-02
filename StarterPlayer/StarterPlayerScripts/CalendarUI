@@ -1,0 +1,319 @@
+-- CalendarUI.lua
+-- Hanya urusan tampilan — tidak ada logika game di sini
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+
+local function corner(parent, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r or 8)
+	c.Parent = parent
+end
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local remotes   = ReplicatedStorage:WaitForChild("GameRemotes")
+
+local Remotes = {
+	SleepFadeOut = remotes:WaitForChild("SleepFadeOut"),
+	SleepFadeIn  = remotes:WaitForChild("SleepFadeIn"),
+	CalendarSync = remotes:WaitForChild("CalendarSync"),
+	ShowNotif    = remotes:WaitForChild("ShowNotif"),
+}
+
+-- ══════════════════════════════════════
+-- BUILD UI
+-- ══════════════════════════════════════
+local function makeGui(name, displayOrder)
+	local g = Instance.new("ScreenGui")
+	g.Name           = name
+	g.ResetOnSpawn   = false
+	g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	g.DisplayOrder   = displayOrder or 1
+	g.Parent         = playerGui
+	return g
+end
+
+local function addCorner(parent, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius or 8)
+	c.Parent = parent
+end
+
+-- ── HUD KALENDER (kanan atas) ──
+local hudGui    = makeGui("CalendarHUD", 5)
+local hudFrame  = Instance.new("Frame")
+hudFrame.Size                   = UDim2.new(0, 210, 0, 68)
+hudFrame.Position               = UDim2.new(1, -225, 0, 12)
+hudFrame.BackgroundColor3       = Color3.fromRGB(30, 18, 6)
+hudFrame.BackgroundTransparency = 0.15
+hudFrame.BorderSizePixel        = 0
+hudFrame.Parent                 = hudGui
+addCorner(hudFrame, 10)
+
+local hudStroke = Instance.new("UIStroke")
+hudStroke.Color     = Color3.fromRGB(180, 140, 60)
+hudStroke.Thickness = 1.5
+hudStroke.Parent    = hudFrame
+
+local seasonLabel = Instance.new("TextLabel")
+seasonLabel.Size                   = UDim2.new(1, -12, 0, 30)
+seasonLabel.Position               = UDim2.new(0, 6, 0, 6)
+seasonLabel.BackgroundTransparency = 1
+seasonLabel.Text                   = "🌱 Musim Semi"
+seasonLabel.TextColor3             = Color3.fromRGB(150, 220, 130)
+seasonLabel.TextSize               = 17
+seasonLabel.Font                   = Enum.Font.GothamBold
+seasonLabel.TextXAlignment         = Enum.TextXAlignment.Left
+seasonLabel.Parent                 = hudFrame
+
+local dayLabel = Instance.new("TextLabel")
+dayLabel.Size                   = UDim2.new(1, -12, 0, 22)
+dayLabel.Position               = UDim2.new(0, 6, 0, 36)
+dayLabel.BackgroundTransparency = 1
+dayLabel.Text                   = "Hari 1  ·  Tahun 1"
+dayLabel.TextColor3             = Color3.fromRGB(240, 210, 160)
+dayLabel.TextSize               = 14
+dayLabel.Font                   = Enum.Font.Gotham
+dayLabel.TextXAlignment         = Enum.TextXAlignment.Left
+dayLabel.Parent                 = hudFrame
+
+-- ── HUD KOIN (kiri, agak ke bawah dari pojok) ──
+local coinGui   = makeGui("CoinHUD", 5)
+local coinFrame = Instance.new("Frame")
+coinFrame.Size                   = UDim2.new(0, 160, 0, 50)
+coinFrame.Position               = UDim2.new(0, 15, 0, 90)  -- kiri, turun dikit dari atas
+coinFrame.BackgroundColor3       = Color3.fromRGB(30, 22, 10)
+coinFrame.BackgroundTransparency = 0.15
+coinFrame.BorderSizePixel        = 0
+coinFrame.Parent                 = coinGui
+corner(coinFrame, 10)
+
+local coinStroke = Instance.new("UIStroke")
+coinStroke.Color     = Color3.fromRGB(200, 165, 60)
+coinStroke.Thickness = 1.5
+coinStroke.Parent    = coinFrame
+
+local coinIcon = Instance.new("TextLabel")
+coinIcon.Size                   = UDim2.new(0, 30, 0, 30)
+coinIcon.Position               = UDim2.new(0, 8, 0, 10)
+coinIcon.BackgroundTransparency = 1
+coinIcon.Text                   = "🪙"
+coinIcon.TextSize               = 20
+coinIcon.Parent                 = coinFrame
+
+local coinLabel = Instance.new("TextLabel")
+coinLabel.Size                   = UDim2.new(1, -48, 1, 0)
+coinLabel.Position               = UDim2.new(0, 44, 0, 0)
+coinLabel.BackgroundTransparency = 1
+coinLabel.Text                   = "100"
+coinLabel.TextColor3             = Color3.fromRGB(255, 220, 130)
+coinLabel.TextSize               = 20
+coinLabel.Font                   = Enum.Font.GothamBold
+coinLabel.TextXAlignment         = Enum.TextXAlignment.Left
+coinLabel.Parent                 = coinFrame
+
+-- ── HUD AIR (di bawah koin) ──
+local waterFrame = Instance.new("Frame")
+waterFrame.Size                   = UDim2.new(0, 160, 0, 36)
+waterFrame.Position               = UDim2.new(0, 15, 0, 150)
+waterFrame.BackgroundColor3       = Color3.fromRGB(20, 40, 70)
+waterFrame.BackgroundTransparency = 0.15
+waterFrame.BorderSizePixel        = 0
+waterFrame.Parent                 = coinGui
+corner(waterFrame, 10)
+
+local waterStroke = Instance.new("UIStroke")
+waterStroke.Color     = Color3.fromRGB(80, 160, 220)
+waterStroke.Thickness = 1.5
+waterStroke.Parent    = waterFrame
+
+local waterIcon = Instance.new("TextLabel")
+waterIcon.Size                   = UDim2.new(0, 30, 1, 0)
+waterIcon.Position               = UDim2.new(0, 8, 0, 0)
+waterIcon.BackgroundTransparency = 1
+waterIcon.Text                   = "💧"
+waterIcon.TextSize               = 18
+waterIcon.Parent                 = waterFrame
+
+local waterLabel = Instance.new("TextLabel")
+waterLabel.Name                  = "WaterLabel"
+waterLabel.Size                  = UDim2.new(1, -48, 1, 0)
+waterLabel.Position              = UDim2.new(0, 44, 0, 0)
+waterLabel.BackgroundTransparency = 1
+waterLabel.Text                  = "5/5"
+waterLabel.TextColor3            = Color3.fromRGB(120, 200, 255)
+waterLabel.TextSize              = 16
+waterLabel.Font                  = Enum.Font.GothamBold
+waterLabel.TextXAlignment        = Enum.TextXAlignment.Left
+waterLabel.Parent                = waterFrame
+
+-- ── SLEEP UI (blackout) ──
+local sleepGui   = makeGui("SleepUI", 99)
+
+local blackFrame = Instance.new("Frame")
+blackFrame.Size                   = UDim2.new(1, 0, 1, 0)
+blackFrame.BackgroundColor3       = Color3.fromRGB(0, 0, 0)
+blackFrame.BackgroundTransparency = 1
+blackFrame.BorderSizePixel        = 0
+blackFrame.Parent                 = sleepGui
+
+local zzzLabel = Instance.new("TextLabel")
+zzzLabel.Size                   = UDim2.new(0, 200, 0, 50)
+zzzLabel.Position               = UDim2.new(0.5, -100, 0.44, 0)
+zzzLabel.BackgroundTransparency = 1
+zzzLabel.Text                   = "Z z z . . ."
+zzzLabel.TextColor3             = Color3.fromRGB(180, 200, 255)
+zzzLabel.TextSize               = 30
+zzzLabel.Font                   = Enum.Font.GothamBold
+zzzLabel.TextTransparency       = 1
+zzzLabel.Parent                 = sleepGui
+
+local newDayLabel = Instance.new("TextLabel")
+newDayLabel.Size                   = UDim2.new(0, 380, 0, 44)
+newDayLabel.Position               = UDim2.new(0.5, -190, 0.54, 0)
+newDayLabel.BackgroundTransparency = 1
+newDayLabel.Text                   = ""
+newDayLabel.TextColor3             = Color3.fromRGB(255, 220, 110)
+newDayLabel.TextSize               = 21
+newDayLabel.Font                   = Enum.Font.Gotham
+newDayLabel.TextTransparency       = 1
+newDayLabel.Parent                 = sleepGui
+
+-- ── NOTIF BANNER (slide dari atas) ──
+local notifGui   = makeGui("NotifUI", 10)
+
+local notifFrame = Instance.new("Frame")
+notifFrame.Size                   = UDim2.new(0, 340, 0, 46)
+notifFrame.Position               = UDim2.new(0.5, -170, 0, -60)
+notifFrame.BackgroundColor3       = Color3.fromRGB(20, 12, 4)
+notifFrame.BackgroundTransparency = 0.1
+notifFrame.BorderSizePixel        = 0
+notifFrame.Parent                 = notifGui
+addCorner(notifFrame, 8)
+
+local notifStroke = Instance.new("UIStroke")
+notifStroke.Color     = Color3.fromRGB(160, 120, 50)
+notifStroke.Thickness = 1
+notifStroke.Parent    = notifFrame
+
+local notifText = Instance.new("TextLabel")
+notifText.Size                   = UDim2.new(1, -16, 1, 0)
+notifText.Position               = UDim2.new(0, 8, 0, 0)
+notifText.BackgroundTransparency = 1
+notifText.Text                   = ""
+notifText.TextColor3             = Color3.fromRGB(240, 215, 170)
+notifText.TextSize               = 15
+notifText.Font                   = Enum.Font.Gotham
+notifText.Parent                 = notifFrame
+
+-- ══════════════════════════════════════
+-- HELPER
+-- ══════════════════════════════════════
+local function tw(obj, t, props)
+	TweenService:Create(obj,
+		TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+		props
+	):Play()
+end
+
+-- ══════════════════════════════════════
+-- EVENT HANDLERS
+-- ══════════════════════════════════════
+
+-- Update HUD kalender
+Remotes.CalendarSync.OnClientEvent:Connect(function(snap)
+	seasonLabel.Text       = snap.seasonIcon .. "  " .. snap.seasonName
+	seasonLabel.TextColor3 = snap.seasonColor
+	dayLabel.Text          = string.format("Hari %d  ·  Tahun %d", snap.day, snap.year)
+end)
+
+-- Sync koin dari server
+local currencyRemote = remotes:WaitForChild("CurrencySync")
+currencyRemote.OnClientEvent:Connect(function(amount)
+	coinLabel.Text = tostring(amount)
+end)
+
+-- Sync air dari server
+local waterRemote = remotes:WaitForChild("WaterSync")
+waterRemote.OnClientEvent:Connect(function(current, max)
+	local lbl = waterFrame:FindFirstChild("WaterLabel")
+	if lbl then
+		lbl.Text = string.format("%d/%d", current, max)
+		-- Merah kalau hampir habis
+		lbl.TextColor3 = (current <= 1)
+			and Color3.fromRGB(255, 100, 80)
+			or  Color3.fromRGB(120, 200, 255)
+	end
+end)
+
+-- Guard anti double trigger
+local isSleeping = false
+
+-- Fade to black (mulai tidur)
+Remotes.SleepFadeOut.OnClientEvent:Connect(function()
+	if isSleeping then return end
+	isSleeping = true
+
+	-- Reset paksa dulu biar bersih
+	blackFrame.BackgroundTransparency = 1
+	zzzLabel.TextTransparency         = 1
+	newDayLabel.TextTransparency      = 1
+	newDayLabel.Text                  = ""
+
+	tw(blackFrame, 0.9, {BackgroundTransparency = 0})
+	tw(zzzLabel,   0.9, {TextTransparency = 0})
+end)
+
+-- Fade from black (bangun pagi)
+Remotes.SleepFadeIn.OnClientEvent:Connect(function(snap)
+	if not isSleeping then return end  -- tolak kalau FadeOut belum jalan
+
+	if snap then
+		newDayLabel.Text = string.format(
+			"%s  Hari %d  ·  %s  ·  Tahun %d",
+			snap.seasonIcon, snap.day, snap.seasonName, snap.year
+		)
+	end
+
+	-- Jalankan dalam coroutine agar tidak block event lain
+	task.spawn(function()
+		tw(newDayLabel, 0.5, {TextTransparency = 0})
+		task.wait(2)
+
+		tw(blackFrame,  1.2, {BackgroundTransparency = 1})
+		tw(zzzLabel,    1.2, {TextTransparency = 1})
+		tw(newDayLabel, 1.2, {TextTransparency = 1})
+
+		task.wait(1.3)  -- tunggu tween fade-out selesai
+		isSleeping = false  -- baru reset guard
+	end)
+end)
+
+-- Notifikasi (tengah malam dll)
+local notifBusy  = false
+local notifQueue = {}
+
+local function processNotifQueue()
+	if notifBusy then return end
+	notifBusy = true
+	task.spawn(function()
+		while #notifQueue > 0 do
+			local msg = table.remove(notifQueue, 1)
+			notifText.Text = msg
+			tw(notifFrame, 0.35, {Position = UDim2.new(0.5, -170, 0, 14)})
+			task.wait(1.5)
+			tw(notifFrame, 0.35, {Position = UDim2.new(0.5, -170, 0, -60)})
+			task.wait(0.5)
+		end
+		notifBusy = false
+	end)
+end
+
+Remotes.ShowNotif.OnClientEvent:Connect(function(msg)
+	table.insert(notifQueue, msg)
+	processNotifQueue()
+end)
+
+print("[CalendarUI] Siap.")
