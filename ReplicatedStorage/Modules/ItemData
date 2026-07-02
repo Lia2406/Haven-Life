@@ -1,0 +1,99 @@
+-- ItemData.lua
+-- Database master semua item di game — nama, icon, stack limit, tipe
+
+local ItemData = {}
+
+-- ══════════════════════════════════════
+-- DAFTAR ITEM
+-- ══════════════════════════════════════
+ItemData.Items = {
+	-- ── BIBIT ──
+	WheatSeed = {
+		id          = "WheatSeed",
+		name        = "Bibit Gandum",
+		icon        = "rbxasset://textures/ui/GuiImagePlaceholder.png",  -- ganti dengan asset id kamu
+		maxStack    = 99,
+		type        = "seed",
+		sellPrice   = 2,
+		buyPrice    = 3,
+	},
+	CarrotSeed = {
+		id          = "CarrotSeed",
+		name        = "Bibit Wortel",
+		icon        = "rbxassetid://0",
+		maxStack    = 99,
+		type        = "seed",
+		sellPrice   = 2,
+		buyPrice    = 4,
+	},
+	TurnipSeed = {
+		id          = "TurnipSeed",
+		name        = "Bibit Lobak",
+		icon        = "rbxassetid://0",
+		maxStack    = 99,
+		type        = "seed",
+		sellPrice   = 2,
+		buyPrice    = 2,
+	},
+
+	-- ── HASIL PANEN ──
+	Wheat = {
+		id          = "Wheat",
+		name        = "Gandum",
+		icon        = "rbxassetid://0",
+		maxStack    = 99,
+		type        = "crop",
+		sellPrice   = 15,
+		buyPrice    = nil,  -- tidak bisa dibeli
+	},
+	Carrot = {
+		id          = "Carrot",
+		name        = "Wortel",
+		icon        = "rbxassetid://0",
+		maxStack    = 99,
+		type        = "crop",
+		sellPrice   = 20,
+		buyPrice    = nil,
+	},
+	Turnip = {
+		id          = "Turnip",
+		name        = "Lobak",
+		icon        = "rbxassetid://0",
+		maxStack    = 99,
+		type        = "crop",
+		sellPrice   = 18,
+		buyPrice    = nil,
+	},
+
+	-- ── ALAT (tidak bisa stack) ──
+	Hoe = {
+		id          = "Hoe",
+		name        = "Cangkul",
+		icon        = "rbxassetid://0",
+		maxStack    = 1,
+		type        = "tool",
+		sellPrice   = nil,
+		buyPrice    = 40,
+	},
+	WateringCan = {
+		id          = "WateringCan",
+		name        = "Penyiram",
+		icon        = "rbxassetid://0",
+		maxStack    = 1,
+		type        = "tool",
+		sellPrice   = nil,
+		buyPrice    = 30,
+		waterCapacity  = 5,
+	},
+}
+
+-- ── GETTER ──
+function ItemData.get(itemId)
+	return ItemData.Items[itemId]
+end
+
+function ItemData.exists(itemId)
+	return ItemData.Items[itemId] ~= nil
+end
+
+return ItemData
