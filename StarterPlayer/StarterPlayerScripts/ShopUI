@@ -1,0 +1,360 @@
+-- ShopUI.lua
+-- Tampilan toko — katalog item, tombol beli, pilih jumlah
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local remotes     = ReplicatedStorage:WaitForChild("GameRemotes", 5)
+local shopRemotes = remotes:WaitForChild("ShopRemotes")
+
+local OpenShopUI = shopRemotes:WaitForChild("OpenShopUI")
+local RequestBuy = shopRemotes:WaitForChild("RequestBuy")
+
+local coinRemote = remotes:WaitForChild("CurrencySync")
+
+-- Track koin lokal untuk preview harga
+local localCoins = 0
+coinRemote.OnClientEvent:Connect(function(amount)
+	localCoins = amount
+end)
+
+-- ══════════════════════════════════════
+-- BUILD UI
+-- ══════════════════════════════════════
+local gui = Instance.new("ScreenGui")
+gui.Name           = "ShopUI"
+gui.ResetOnSpawn   = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.DisplayOrder   = 50
+gui.Parent         = playerGui
+
+local function corner(parent, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r or 8)
+	c.Parent = parent
+end
+
+local function stroke(parent, color, thick)
+	local s = Instance.new("UIStroke")
+	s.Color     = color or Color3.fromRGB(100, 70, 30)
+	s.Thickness = thick or 2
+	s.Parent    = parent
+end
+
+-- Overlay
+local overlay = Instance.new("Frame")
+overlay.Size                   = UDim2.new(1, 0, 1, 0)
+overlay.BackgroundColor3       = Color3.fromRGB(0, 0, 0)
+overlay.BackgroundTransparency = 1
+overlay.Visible                = false
+overlay.ZIndex                 = 40
+overlay.Parent                 = gui
+
+-- Panel utama
+local panel = Instance.new("Frame")
+panel.Size                   = UDim2.new(0, 480, 0, 520)
+panel.Position               = UDim2.new(0.5, -240, 0.5, -260)
+panel.BackgroundColor3       = Color3.fromRGB(38, 28, 16)
+panel.BorderSizePixel        = 0
+panel.Visible                = false
+panel.ZIndex                 = 41
+panel.Parent                 = gui
+corner(panel, 14)
+stroke(panel, Color3.fromRGB(160, 120, 55), 2)
+
+-- Header
+local header = Instance.new("Frame")
+header.Size                   = UDim2.new(1, 0, 0, 56)
+header.BackgroundColor3       = Color3.fromRGB(28, 20, 10)
+header.BorderSizePixel        = 0
+header.ZIndex                 = 42
+header.Parent                 = panel
+corner(header, 14)
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size                   = UDim2.new(1, -60, 1, 0)
+titleLabel.Position               = UDim2.new(0, 16, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text                   = "🏪  Toko"
+titleLabel.TextColor3             = Color3.fromRGB(255, 220, 140)
+titleLabel.TextSize               = 24
+titleLabel.Font                   = Enum.Font.GothamBold
+titleLabel.TextXAlignment         = Enum.TextXAlignment.Left
+titleLabel.ZIndex                 = 43
+titleLabel.Parent                 = header
+
+-- Koin di header
+local headerCoin = Instance.new("TextLabel")
+headerCoin.Size                   = UDim2.new(0, 130, 0, 30)
+headerCoin.Position               = UDim2.new(1, -200, 0.5, -15)
+headerCoin.BackgroundColor3       = Color3.fromRGB(50, 38, 18)
+headerCoin.BackgroundTransparency = 0
+headerCoin.Text                   = "🪙 " .. tostring(localCoins)
+headerCoin.TextColor3             = Color3.fromRGB(255, 215, 100)
+headerCoin.TextSize               = 15
+headerCoin.Font                   = Enum.Font.GothamBold
+headerCoin.ZIndex                 = 43
+headerCoin.Parent                 = header
+corner(headerCoin, 8)
+
+-- Update koin di header saat berubah
+coinRemote.OnClientEvent:Connect(function(amount)
+	localCoins = amount
+	headerCoin.Text = "🪙 " .. tostring(amount)
+end)
+
+-- Tombol tutup
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size                   = UDim2.new(0, 36, 0, 36)
+closeBtn.Position               = UDim2.new(1, -46, 0.5, -18)
+closeBtn.BackgroundColor3       = Color3.fromRGB(90, 45, 30)
+closeBtn.Text                   = "✕"
+closeBtn.TextColor3             = Color3.fromRGB(255, 200, 180)
+closeBtn.TextSize               = 18
+closeBtn.Font                   = Enum.Font.GothamBold
+closeBtn.ZIndex                 = 43
+closeBtn.Parent                 = header
+corner(closeBtn, 8)
+
+-- Tab section label
+local sectionLabel = Instance.new("TextLabel")
+sectionLabel.Size                   = UDim2.new(1, -24, 0, 28)
+sectionLabel.Position               = UDim2.new(0, 12, 0, 60)
+sectionLabel.BackgroundTransparency = 1
+sectionLabel.Text                   = "Alat & Bibit"
+sectionLabel.TextColor3             = Color3.fromRGB(200, 170, 110)
+sectionLabel.TextSize               = 14
+sectionLabel.Font                   = Enum.Font.GothamBold
+sectionLabel.TextXAlignment         = Enum.TextXAlignment.Left
+sectionLabel.ZIndex                 = 42
+sectionLabel.Parent                 = panel
+
+-- Scroll list
+local listFrame = Instance.new("ScrollingFrame")
+listFrame.Size                   = UDim2.new(1, -24, 1, -102)
+listFrame.Position               = UDim2.new(0, 12, 0, 94)
+listFrame.BackgroundTransparency = 1
+listFrame.BorderSizePixel        = 0
+listFrame.ScrollBarThickness     = 6
+listFrame.ScrollBarImageColor3   = Color3.fromRGB(140, 100, 50)
+listFrame.ZIndex                 = 42
+listFrame.Parent                 = panel
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding   = UDim.new(0, 6)
+listLayout.Parent    = listFrame
+
+listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	listFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
+end)
+
+-- ══════════════════════════════════════
+-- BUAT ITEM ROW
+-- ══════════════════════════════════════
+local function createItemRow(itemInfo)
+	local row = Instance.new("Frame")
+	row.Size                   = UDim2.new(1, -6, 0, 72)
+	row.BackgroundColor3       = Color3.fromRGB(52, 38, 22)
+	row.BorderSizePixel        = 0
+	row.ZIndex                 = 42
+	row.Parent                 = listFrame
+	corner(row, 10)
+
+	-- Icon placeholder
+	local iconFrame = Instance.new("Frame")
+	iconFrame.Size                   = UDim2.new(0, 54, 0, 54)
+	iconFrame.Position               = UDim2.new(0, 9, 0.5, -27)
+	iconFrame.BackgroundColor3       = Color3.fromRGB(35, 26, 14)
+	iconFrame.BorderSizePixel        = 0
+	iconFrame.ZIndex                 = 43
+	iconFrame.Parent                 = row
+	corner(iconFrame, 8)
+
+	local iconImg = Instance.new("ImageLabel")
+	iconImg.Size                   = UDim2.new(0.8, 0, 0.8, 0)
+	iconImg.Position               = UDim2.new(0.1, 0, 0.1, 0)
+	iconImg.BackgroundTransparency = 1
+	iconImg.Image                  = itemInfo.icon ~= "" and itemInfo.icon
+		or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+	iconImg.ScaleType              = Enum.ScaleType.Fit
+	iconImg.ZIndex                 = 44
+	iconImg.Parent                 = iconFrame
+
+	-- Nama item
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size                   = UDim2.new(0.45, 0, 0, 26)
+	nameLabel.Position               = UDim2.new(0, 72, 0, 10)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text                   = itemInfo.name
+	nameLabel.TextColor3             = Color3.fromRGB(255, 235, 195)
+	nameLabel.TextSize               = 16
+	nameLabel.Font                   = Enum.Font.GothamBold
+	nameLabel.TextXAlignment         = Enum.TextXAlignment.Left
+	nameLabel.ZIndex                 = 43
+	nameLabel.Parent                 = row
+
+	-- Harga
+	local priceLabel = Instance.new("TextLabel")
+	priceLabel.Size                   = UDim2.new(0.45, 0, 0, 20)
+	priceLabel.Position               = UDim2.new(0, 72, 0, 38)
+	priceLabel.BackgroundTransparency = 1
+	priceLabel.Text                   = "🪙 " .. tostring(itemInfo.buyPrice) .. " / item"
+	priceLabel.TextColor3             = Color3.fromRGB(255, 210, 90)
+	priceLabel.TextSize               = 13
+	priceLabel.Font                   = Enum.Font.Gotham
+	priceLabel.TextXAlignment         = Enum.TextXAlignment.Left
+	priceLabel.ZIndex                 = 43
+	priceLabel.Parent                 = row
+
+	-- Input jumlah
+	local qtyBox = Instance.new("TextBox")
+	qtyBox.Size                   = UDim2.new(0, 46, 0, 34)
+	qtyBox.Position               = UDim2.new(1, -168, 0.5, -17)
+	qtyBox.BackgroundColor3       = Color3.fromRGB(28, 20, 10)
+	qtyBox.Text                   = "1"
+	qtyBox.TextColor3             = Color3.fromRGB(255, 255, 255)
+	qtyBox.TextSize               = 15
+	qtyBox.Font                   = Enum.Font.GothamBold
+	qtyBox.ClearTextOnFocus       = true
+	qtyBox.ZIndex                 = 43
+	qtyBox.Parent                 = row
+	corner(qtyBox, 6)
+	stroke(qtyBox, Color3.fromRGB(90, 65, 30), 1.5)
+
+	-- Preview total harga (update saat qty berubah)
+	local totalLabel = Instance.new("TextLabel")
+	totalLabel.Size                   = UDim2.new(0, 80, 0, 18)
+	totalLabel.Position               = UDim2.new(1, -168, 1, -24)
+	totalLabel.BackgroundTransparency = 1
+	totalLabel.Text                   = "= 🪙 " .. tostring(itemInfo.buyPrice)
+	totalLabel.TextColor3             = Color3.fromRGB(200, 180, 120)
+	totalLabel.TextSize               = 11
+	totalLabel.Font                   = Enum.Font.Gotham
+	totalLabel.ZIndex                 = 43
+	totalLabel.Parent                 = row
+
+	qtyBox:GetPropertyChangedSignal("Text"):Connect(function()
+		local qty = tonumber(qtyBox.Text) or 1
+		qty = math.max(1, math.floor(qty))
+		local total = qty * itemInfo.buyPrice
+		totalLabel.Text = "= 🪙 " .. tostring(total)
+		-- Merah kalau tidak cukup koin
+		totalLabel.TextColor3 = (total > localCoins)
+			and Color3.fromRGB(255, 100, 80)
+			or  Color3.fromRGB(200, 180, 120)
+	end)
+
+	-- Tombol beli
+	local buyBtn = Instance.new("TextButton")
+	buyBtn.Size                   = UDim2.new(0, 74, 0, 34)
+	buyBtn.Position               = UDim2.new(1, -84, 0.5, -17)
+	buyBtn.BackgroundColor3       = Color3.fromRGB(50, 120, 65)
+	buyBtn.Text                   = "Beli"
+	buyBtn.TextColor3             = Color3.fromRGB(255, 255, 255)
+	buyBtn.TextSize               = 15
+	buyBtn.Font                   = Enum.Font.GothamBold
+	buyBtn.ZIndex                 = 43
+	buyBtn.Parent                 = row
+	corner(buyBtn, 8)
+
+	buyBtn.MouseButton1Click:Connect(function()
+		local qty = math.max(1, math.floor(tonumber(qtyBox.Text) or 1))
+		local total = qty * itemInfo.buyPrice
+
+		if total > localCoins then
+			-- Flash merah
+			buyBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 40)
+			buyBtn.Text = "❌"
+			task.wait(0.8)
+			buyBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 65)
+			buyBtn.Text = "Beli"
+			return
+		end
+
+		RequestBuy:FireServer(itemInfo.itemId, qty)
+
+		-- Feedback visual
+		buyBtn.BackgroundColor3 = Color3.fromRGB(30, 90, 45)
+		buyBtn.Text = "✓"
+		task.wait(0.6)
+		buyBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 65)
+		buyBtn.Text = "Beli"
+	end)
+
+	return row
+end
+
+-- ══════════════════════════════════════
+-- BUKA / TUTUP PANEL
+-- ══════════════════════════════════════
+local isOpen = false
+
+local function closeShop()
+	if not isOpen then return end
+	isOpen = false
+
+	local t = TweenService:Create(panel, TweenInfo.new(0.2),
+		{Position = UDim2.new(0.5, -240, 0.55, -260)}
+	)
+	t:Play()
+	TweenService:Create(overlay, TweenInfo.new(0.2),
+		{BackgroundTransparency = 1}
+	):Play()
+	t.Completed:Wait()
+
+	panel.Visible   = false
+	overlay.Visible = false
+end
+
+local function openShop(catalog)
+	if isOpen then closeShop() end
+	isOpen = true
+
+	-- Bersihkan list lama
+	for _, child in ipairs(listFrame:GetChildren()) do
+		if child:IsA("Frame") then child:Destroy() end
+	end
+
+	-- Isi item
+	for _, itemInfo in ipairs(catalog) do
+		createItemRow(itemInfo)
+	end
+
+	overlay.Visible = true
+	panel.Visible   = true
+	panel.Position  = UDim2.new(0.5, -240, 0.55, -260)
+
+	TweenService:Create(overlay, TweenInfo.new(0.25),
+		{BackgroundTransparency = 0.5}
+	):Play()
+	TweenService:Create(panel,
+		TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{Position = UDim2.new(0.5, -240, 0.5, -260)}
+	):Play()
+end
+
+closeBtn.MouseButton1Click:Connect(closeShop)
+
+overlay.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		closeShop()
+	end
+end)
+
+-- ── TUTUP PAKAI ESC ──
+game:GetService("UserInputService").InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.Escape then
+		closeShop()
+	end
+end)
+
+OpenShopUI.OnClientEvent:Connect(function(catalog)
+	openShop(catalog)
+end)
+
+print("[ShopUI] Siap.")
