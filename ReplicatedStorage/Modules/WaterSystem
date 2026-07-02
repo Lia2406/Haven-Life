@@ -1,0 +1,146 @@
+-- WaterSystem.lua
+-- Mengatur kapasitas air Penyiram per player
+-- dan scan sumber air (sumur, sungai) untuk isi ulang
+
+local WaterSystem = {}
+WaterSystem.__index = WaterSystem
+
+local CONFIG = {
+	MAX_WATER     = 5,
+	SOURCE_NAMES  = {"well", "sumur", "river", "sungai", "water", "air", "pond"},
+	MAX_DISTANCE  = 8,
+	HOLD_DURATION = 0.5,
+}
+
+function WaterSystem.new()
+	local self        = setmetatable({}, WaterSystem)
+	self.playerWater  = {}  -- { [userId] = currentWater }
+	self.onChanged    = nil -- callback(player, current, max)
+	self.onNotify     = nil -- callback(player, message)
+	return self
+end
+
+-- ── INIT PLAYER ──
+function WaterSystem:initPlayer(player)
+	self.playerWater[player.UserId] = CONFIG.MAX_WATER
+	self:_notify(player)
+end
+
+function WaterSystem:removePlayer(player)
+	self.playerWater[player.UserId] = nil
+end
+
+-- ── GET / SET ──
+function WaterSystem:getWater(player)
+	return self.playerWater[player.UserId] or 0
+end
+
+function WaterSystem:hasWater(player)
+	return self:getWater(player) > 0
+end
+
+function WaterSystem:useWater(player)
+	local current = self:getWater(player)
+	if current <= 0 then return false end
+	self.playerWater[player.UserId] = current - 1
+	self:_notify(player)
+	return true
+end
+
+function WaterSystem:refill(player)
+	self.playerWater[player.UserId] = CONFIG.MAX_WATER
+	self:_notify(player)
+	if self.onNotify then
+		self.onNotify(player, string.format("💧 Penyiram terisi penuh! (%d/%d)", CONFIG.MAX_WATER, CONFIG.MAX_WATER))
+	end
+end
+
+function WaterSystem:getMax()
+	return CONFIG.MAX_WATER
+end
+
+function WaterSystem:_notify(player)
+	if self.onChanged then
+		self.onChanged(player, self:getWater(player), CONFIG.MAX_WATER)
+	end
+end
+
+-- ── SCAN SUMBER AIR ──
+function WaterSystem:_isSourceName(name)
+	local lower = name:lower()
+	for _, kw in ipairs(CONFIG.SOURCE_NAMES) do
+		if lower:find(kw, 1, true) then return true end
+	end
+	return false
+end
+
+local function getPrimaryOrLargest(model)
+	if model.PrimaryPart then return model.PrimaryPart end
+	local biggest, biggestVol = nil, 0
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") then
+			local v = p.Size.X * p.Size.Y * p.Size.Z
+			if v > biggestVol then biggest = p; biggestVol = v end
+		end
+	end
+	return biggest
+end
+
+function WaterSystem:scanAndSetup()
+	local count = 0
+
+	local function scan(parent)
+		for _, obj in ipairs(parent:GetChildren()) do
+			local name = obj.Name
+			if self:_isSourceName(name) then
+				local anchor
+				if obj:IsA("Model") then
+					anchor = getPrimaryOrLargest(obj)
+				elseif obj:IsA("BasePart") then
+					anchor = obj
+				end
+
+				if anchor then
+					-- Hapus prompt lama
+					local old = anchor:FindFirstChildOfClass("ProximityPrompt")
+					if old then old:Destroy() end
+
+					local prompt = Instance.new("ProximityPrompt")
+					prompt.ActionText            = "Isi Ulang Air"
+					prompt.ObjectText            = "💧 Sumber Air"
+					prompt.HoldDuration          = CONFIG.HOLD_DURATION
+					prompt.MaxActivationDistance = CONFIG.MAX_DISTANCE
+					prompt.RequiresLineOfSight   = false
+					prompt.Parent                = anchor
+
+					prompt.Triggered:Connect(function(player)
+						-- Cek apakah player pegang WateringCan
+						local inv = _G.GetPlayerInventory and _G.GetPlayerInventory(player)
+						if not inv then return end
+						local slot = inv:getSelectedItem()
+						if slot and slot.itemId == "WateringCan" then
+							self:refill(player)
+						else
+							if self.onNotify then
+								self.onNotify(player, "🪣 Pegang Penyiram dulu!")
+							end
+						end
+					end)
+
+					count += 1
+					print("[WaterSystem] Sumber air ditemukan:", anchor:GetFullName())
+				end
+			else
+				if obj:IsA("Folder") or obj:IsA("Model") then
+					scan(obj)
+				end
+			end
+		end
+	end
+
+	scan(workspace)
+	print(string.format("[WaterSystem] ✅ %d sumber air siap.", count))
+	return count
+end
+
+return WaterSystem
